@@ -13,87 +13,127 @@
 ######################################################################
 
 import os
+import sys
 import time
 
 import numpy as np
 import torch
-from cloud_functions import uploadModelwithTimestamp
-from dataset_fetcher import Dataset_fetcher
-from model_architecture import XrayClassifier
 from omegaconf import OmegaConf
 from torch import nn, optim
+from torch.autograd import Variable
+from tqdm import tqdm
 
 import wandb
+from classifier.VGGNet import VGG_net
+from dataLoader import Hotdog_NotHotdog as Dataset_fetcher
+from utils import EarlyStopping
+
+# set flags / seeds
+np.random.seed(1)
+torch.manual_seed(1)
+
+# Load config file
+BASE_DIR = os.getcwd()
+config = OmegaConf.load(f"{BASE_DIR}/config/config.yaml")
+
+# Optimizer Hyperparameter
+EPOCHS = config.EPOCHS
+BATCH_SIZE = config.BATCH_SIZE
+LEARNING_RATE = config.LEARNING_RATE
+DROPOUT_PROBABILITY = config.DROPOUT_PROBABILITY
+
+# Other const variables
+N_WORKERS = config.N_WORKERS
+VERSION = config.VERSION
+
+SPLITS_DISTRIBUTION = config.SPLITS_DISTRIBUTION
+_version = 0
+
+sys.exit(-1)
+# get total dataset size
+dataset_size = 30000
+testing_set_size = int(SPLITS_DISTRIBUTION.test[_version] * dataset_size)
+validation_set_size = int(
+    SPLITS_DISTRIBUTION.train[_version] * dataset_size * config.VALIDATION_SIZE
+)
+training_set_size = int(
+    SPLITS_DISTRIBUTION.train[_version] * dataset_size - validation_set_size
+)
+
+print(
+    dataset_size,
+    testing_set_size,
+    validation_set_size,
+    training_set_size,
+    sum(testing_set_size, validation_set_size, training_set_size),
+)
+sys.exit(-1)
+
+
+print("[INFO] Load datasets from disk...")
+training_set = Dataset_fetcher(train=True, augment=False)
+testing_set = Dataset_fetcher(train=False, augment=False)
+
+print("[INFO] Prepare dataloaders...")
+trainloader = torch.utils.data.DataLoader(
+    training_set, shuffle=True, num_workers=N_WORKERS, batch_size=BATCH_SIZE
+)
+testloader = torch.utils.data.DataLoader(
+    testing_set, shuffle=False, num_workers=N_WORKERS, batch_size=BATCH_SIZE
+)
+
+# Initialize logging with wandb and track conf settings
+wandb.init(project="VGG", config=dict(config), entity="dlincvg1")
 
 
 def train() -> None:
-    """This function runs the whole training procedure"""
-
-    # set flags / seeds
-    np.random.seed(1)
-    torch.manual_seed(1)
-
-    BASE_DIR = os.getcwd()
-
-    # Load config file
-    config = OmegaConf.load(BASE_DIR + "/config/config.yaml")
-
-    # Initialize logging with wandb and track conf settings
-    wandb.init(project="MLOps-Project", config=dict(config))
-
-    # Optimizer Hyperparameter
-    EPOCHS = config.EPOCHS
-    BATCH_SIZE = config.BATCH_SIZE
-    LEARNING_RATE = config.LEARNING_RATE
-    DROPOUT_PROBABILITY = config.DROPOUT_PROBABILITY
-
-    # config  variables
-    N_WORKERS = config.N_WORKERS
-    best_val = 100000000
-
-    TRAIN_PATHS = {
-        "images": BASE_DIR + config.TRAIN_PATHS.images,
-        "labels": BASE_DIR + config.TRAIN_PATHS.labels,
-    }
-
-    TEST_PATHS = {
-        "images": BASE_DIR + config.TEST_PATHS.images,
-        "labels": BASE_DIR + config.TEST_PATHS.labels,
-    }
-
-    print("[INFO] Load datasets from disk...")
-    training_set = Dataset_fetcher(TRAIN_PATHS["images"], TRAIN_PATHS["labels"])
-    testing_set = Dataset_fetcher(TEST_PATHS["images"], TEST_PATHS["labels"])
-
-    print("[INFO] Prepare dataloaders...")
-    trainloader = torch.utils.data.DataLoader(
-        training_set, shuffle=True, num_workers=N_WORKERS, batch_size=BATCH_SIZE
-    )
-    testloader = torch.utils.data.DataLoader(
-        testing_set, shuffle=False, num_workers=N_WORKERS, batch_size=BATCH_SIZE
-    )
 
     print("[INFO] Building network...")
-    model = XrayClassifier(num_classes=3, dropout_probability=DROPOUT_PROBABILITY)
+    # VGG11, VGG13, VGG16, VGG19
+    model = VGG_net(VERSION)
+
+    device = "cpu"
+    if torch.cuda.is_available():
+        print("[INFO] Pushing network to GPU...")
+        device = "cuda"
+        model.to(device)
+
     wandb.watch(model, log_freq=100)
 
+    # specify loss function (categorical cross-entropy)
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+
+    # specify optimizer (stochastic gradient descent) and learning rate = 0.01
+    optimizer = optim.SGD(
+        model.parameters(),
+        lr=LEARNING_RATE,
+        momentum=0.9,
+        weight_decay=LEARNING_RATE / EPOCHS,
+    )
 
     print("[INFO] Started training the model...\n")
     start_t = time.time()
-    for epoch in range(EPOCHS):
-        # Training Loop Start
+    best_val = 100000000
+    early_stopping = EarlyStopping(tolerance=5, min_delta=10)
+
+    for epoch in tqdm(range(EPOCHS), unit="epoch"):
+        ######################
+        # Train the model #
+        ######################
         model.train()
 
         losses = []
         correct = 0
         total = 0
 
-        for count, (images, labels) in enumerate(trainloader):
+        for _, (images, labels) in tqdm(enumerate(trainloader), total=len(trainloader)):
+
+            # wrap them in Variable
+            images, labels = Variable(images.cuda()), Variable(labels.cuda())
+
             optimizer.zero_grad(set_to_none=True)
 
-            output = model(images)
+            output = model(images.float())
             loss = criterion(output, labels)
 
             loss.backward()
@@ -116,8 +156,10 @@ def train() -> None:
             f"Epoch {epoch+1}/{EPOCHS} \n \tTraining:  "
             f" Loss={train_loss:.2f}\t Accuracy={train_acc}%\t"
         )
-        # Training Loop End
 
+        ######################
+        # validate the model #
+        ######################
         with torch.no_grad():
             # Evaluation Loop Start
             model.eval()
@@ -128,7 +170,10 @@ def train() -> None:
 
             for images, labels in testloader:
 
-                output = model(images)
+                # wrap them in Variable
+                images, labels = Variable(images.cuda()), Variable(labels.cuda())
+
+                output = model(images.float())
                 loss = criterion(output, labels)
 
                 losses.append(loss.item())
@@ -170,16 +215,23 @@ def train() -> None:
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                 },
-                os.path.join(config.CHECKPOINT_PATH, "epoch_{}.pth".format(epoch + 1)),
+                os.path.join(config.CHECKPOINT_PATH, f"epoch_{epoch + 1}.pth"),
             )
+
+            # early stopping
+            early_stopping(train_loss, val_loss)
+            if early_stopping.early_stop:
+                print(f"[INFO] Initializing Early stoppage at epoch: {epoch+1}...")
+                break
 
     end_t = time.time()
     run_time = end_t - start_t
 
     # if checkpoint folder is meant to be saved for each experiment
-    # wandb.save(config.CHECKPOINT_PATH)
-    uploadModelwithTimestamp(config)
-    print(f"[INFO] Successfully completed training session. Running time: {run_time/60:.2f} min")
+    wandb.save(config.CHECKPOINT_PATH)
+    print(
+        f"[INFO] Successfully completed training session. Running time: {run_time/60:.2f} min"
+    )
 
 
 if __name__ == "__main__":
