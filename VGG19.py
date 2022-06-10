@@ -11,6 +11,7 @@ import torchvision.datasets as datasets
 from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
+import torchvision.models as models
 
 # Check if torch available
 if torch.cuda.is_available():
@@ -32,7 +33,6 @@ wandb.init(project="Project1", entity="dlincvg1", config=dict(config),)
 _num_epoch = config.epoch
 batch_size = config.batch_size
 learning_rate = config.learning_rate
-_dropout = config.dropout
 
 
 #%% Dataloader
@@ -61,7 +61,7 @@ class Hotdog_NotHotdog(torch.utils.data.Dataset):
         X = self.transform(image)
         return X, y
 
-size = 128
+size = 224
 train_transform = transforms.Compose([transforms.Resize((size, size)), 
                                     transforms.ToTensor()])
 test_transform = transforms.Compose([transforms.Resize((size, size)), 
@@ -75,47 +75,21 @@ test_loader = DataLoader(testset, batch_size=batch_size, shuffle=False, num_work
 
 #%% Network
 
-class Network(nn.Module):
-    def __init__(self):
-        super(Network, self).__init__()
-        self.convolutional = nn.Sequential(
-                nn.Conv2d(in_channels=3,
-                        out_channels=8,
-                        kernel_size=(3,3),
-                        padding='same'),
-                nn.Dropout(_dropout),
-                nn.BatchNorm2d(8),
-                nn.ReLU(),
-                nn.Conv2d(in_channels=8,
-                          out_channels=8,
-                          kernel_size=(3,3),
-                         padding='same'),
-                nn.Dropout(_dropout),
-                nn.BatchNorm2d(8),
-                nn.ReLU(),
-                nn.Conv2d(in_channels=8,
-                          out_channels=16,
-                          kernel_size=(3,3),
-                         padding='same'),
-                nn.Dropout(_dropout),
-                nn.BatchNorm2d(16),
-        )
-
-        self.fully_connected = nn.Sequential(
-                nn.Linear(128*128*16, 500),
-                nn.ReLU(),
-                nn.Linear(500, 2),
-        )
-    
-    def forward(self, x):
-        x = self.convolutional(x)
-        #reshape x so it becomes flat, except for the first dimension (which is the minibatch)
-        x = x.view(x.size(0), -1)
-        x = self.fully_connected(x)
-        return x
+model = models.vgg19(pretrained=True)
 
 
-model = Network()
+#%%
+
+model.aux_logits = False
+
+model.classifier[6] = nn.Sequential(
+    nn.Linear(model.classifier[6].in_features,10),
+    nn.Linear(10,2)
+)
+
+
+
+
 model.to(device)
 wandb.watch(model, log_freq=100)
 
