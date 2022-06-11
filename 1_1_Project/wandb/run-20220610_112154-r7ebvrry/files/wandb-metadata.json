@@ -1,0 +1,22 @@
+{
+    "os": "Linux-3.10.0-1160.66.1.el7.x86_64-x86_64-with-glibc2.2.5",
+    "python": "3.8.11",
+    "heartbeatAt": "2022-06-10T09:21:58.725757",
+    "startedAt": "2022-06-10T09:21:54.074805",
+    "docker": null,
+    "cpu_count": 16,
+    "cuda": null,
+    "args": [],
+    "state": "running",
+    "program": "/zhome/0c/3/149896/DL-CV/inception_v3.py",
+    "codePath": "inception_v3.py",
+    "git": {
+        "remote": "git@github.com:davelbit/DL-CV.git",
+        "commit": "5d4fdc96e25493011c4b6bd1e4dda00d8255ad47"
+    },
+    "email": "cm@christian-metz.de",
+    "root": "/zhome/0c/3/149896/DL-CV",
+    "host": "hpclogin1",
+    "username": "s202460",
+    "executable": "/zhome/0c/3/149896/02514_DLinCV/3_8_11/bin/python3"
+}
