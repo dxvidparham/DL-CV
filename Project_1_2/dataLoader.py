@@ -21,7 +21,6 @@ import numpy as np
 import PIL.Image as Image
 import torch
 from omegaconf import OmegaConf
-from torchvision import transforms
 
 # Load config file
 BASE_DIR = os.getcwd()
@@ -94,29 +93,16 @@ class Hotdog_NotHotdog(torch.utils.data.Dataset):
 
 if __name__ == "__main__":
 
-    # Load config file
-    BASE_DIR = os.getcwd()
-    config = OmegaConf.load(f"{BASE_DIR}/config/config.yaml")
-    # Optimizer Hyperparameter
-    BATCH_SIZE = config.BATCH_SIZE
-
-    # config  variables
-    N_WORKERS = config.N_WORKERS
-    IMG_SHAPE = tuple(config.IMG_SHAPE)
-
     print("[INFO] Load datasets from disk...")
-    training_set = Hotdog_NotHotdog(train=True, augment=True)
-    print(training_set.transform)
-    testing_set = Hotdog_NotHotdog(train=False, augment=False)
+    dataset = Hotdog_NotHotdog(train=True, augment=True)
 
     print("[INFO] Prepare dataloaders...")
-    trainloader = torch.utils.data.DataLoader(
-        training_set, shuffle=True, num_workers=N_WORKERS, batch_size=BATCH_SIZE
-    )
-    testloader = torch.utils.data.DataLoader(
-        testing_set, shuffle=False, num_workers=N_WORKERS, batch_size=BATCH_SIZE
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        shuffle=True,
+        num_workers=config.N_WORKERS,
+        batch_size=config.BATCH_SIZE,
     )
 
-    trainloader_iter = iter(trainloader)
-    x, y = next(trainloader_iter)
-    # print(x, y)
+    dataloader_iter = iter(dataloader)
+    x, y = next(dataloader_iter)

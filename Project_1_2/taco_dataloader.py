@@ -105,25 +105,17 @@ if __name__ == "__main__":
     # Load config file
     BASE_DIR = os.getcwd()
     config = OmegaConf.load(f"{BASE_DIR}/config/config.yaml")
-    # Optimizer Hyperparameter
-    BATCH_SIZE = config.BATCH_SIZE
-
-    # config  variables
-    N_WORKERS = config.N_WORKERS
 
     print("[INFO] Load datasets from disk...")
-    training_set = TacoDataset()
-
-    testing_set = TacoDataset()
+    dataset = TacoDataset()
 
     print("[INFO] Prepare labeldataloaders...")
-    trainloader = torch.utils.data.DataLoader(
-        training_set, shuffle=True, num_workers=N_WORKERS, batch_size=BATCH_SIZE
-    )
-    testloader = torch.utils.data.DataLoader(
-        testing_set, shuffle=False, num_workers=N_WORKERS, batch_size=BATCH_SIZE
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        shuffle=True,
+        num_workers=config.N_WORKERS
+        batch_size=config.BATCH_SIZE
     )
 
-    trainloader_iter = iter(trainloader)
-    x, y = next(trainloader_iter)
-    # print(x, y)
+    dataloader_iter = iter(dataloader)
+    x, y = next(dataloader_iter)
