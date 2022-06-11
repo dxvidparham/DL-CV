@@ -23,8 +23,8 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 import wandb
 from omegaconf import OmegaConf
 
-DIR= os.getcwd()
-config = OmegaConf.load(f"{DIR}/config/project1.yaml")
+DIR= os.path.dirname(os.path.realpath(__file__))
+config = OmegaConf.load(f"{DIR}/config/baseline.yaml")
 
 wandb.init(project="Project1", entity="dlincvg1", config=dict(config),)
 

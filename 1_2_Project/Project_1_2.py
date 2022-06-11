@@ -35,6 +35,8 @@ _num_epoch = config.epoch
 _batch_size = config.batch_size
 _learning_rate = config.learning_rate
 
+SIZE = config.size
+
 N_WORKERS = 1
 
 #%% wandb init
@@ -47,9 +49,10 @@ if use_wandb == True:
 
 
 #%% Dataloader
+from torchvision.io import read_image
 
 class TacoDataset(torch.utils.data.Dataset):
-    def __init__(self, augment=False):
+    def __init__(self, augment=False, size=1000):
         self.root = "/dtu/datasets1/02514/data_wastedetection/"
         self.annotation = f"{self.root}/annotations.json"
         self.coco = COCO(self.annotation)
@@ -89,6 +92,7 @@ class TacoDataset(torch.utils.data.Dataset):
         path = coco.loadImgs(img_id)[0]["file_name"]
         # open the input image
         img = Image.open(os.path.join(self.root, path))
+        # print(img)
 
         # number of objects in the image
         num_objs = len(coco_annotation)
@@ -128,6 +132,16 @@ class TacoDataset(torch.utils.data.Dataset):
         if self.transform is not None:
             img = self.transform(img)
 
+
+        # print('img:',img.shape)
+        # print('box:',my_annotation["boxes"].shape)
+        # print('labels:',my_annotation["labels"].shape)
+        # print('image_id:',my_annotation["image_id"].shape)
+        # print('area:',my_annotation["area"].shape)
+        # print('iscrowd:',my_annotation["iscrowd"].shape)
+        # print("")
+
+
         return img, my_annotation
 
     def __len__(self):
@@ -136,6 +150,14 @@ class TacoDataset(torch.utils.data.Dataset):
     
 #%% 
 
+# a simple custom collate function, just to show the idea
+def my_collate(batch):
+    data = [item[0] for item in batch]
+    my_annotation = [item[1] for item in batch]
+    # target = torch.LongTensor(target)
+
+    return [data, my_annotation]
+
 print("[INFO] Load datasets from disk...")
 training_set = TacoDataset()
 
@@ -143,16 +165,26 @@ testing_set = TacoDataset()
 
 print("[INFO] Prepare labeldataloaders...")
 trainloader = torch.utils.data.DataLoader(
-    training_set, shuffle=True, batch_size=_batch_size
+    training_set, shuffle=False, batch_size=_batch_size, collate_fn = my_collate
 )
 testloader = torch.utils.data.DataLoader(
     testing_set, shuffle=False, num_workers=N_WORKERS, batch_size=_batch_size
 )
 
 
-# trainloader_iter = iter(trainloader)
-# x, y = next(trainloader_iter)
-    
+# select device (whether GPU or CPU)
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
+# # DataLoader is iterable over Dataset
+# for imgs, annotations in trainloader:
+#     imgs = list(img.to(device) for img in imgs)
+#     annotations = [{k: v.to(device) for k, v in t.items()} for t in annotations]
+#     print(annotations)
+
+
+trainloader_iter = iter(trainloader)
+x, y = next(trainloader_iter)
+
 
 #%% Network
 
@@ -182,7 +214,7 @@ class Network(nn.Module):
         self.fully_connected = nn.Sequential(
                 nn.Linear(128*128*16, 500),
                 nn.ReLU(),
-                nn.Linear(500, 2),
+                nn.Linear(500, 27),
         )
     
     def forward(self, x):
@@ -213,8 +245,39 @@ for epoch in tqdm(range(num_epochs), unit='epoch'):
     #For each epoch
     train_correct = 0
     model.train()
-    for minibatch_no, (data, target) in tqdm(enumerate(trainloader), total=len(trainloader)):
-        data, target = data.to(device), target.to(device)
+    for minibatch_no, (imgs, annotations) in tqdm(enumerate(trainloader), total=len(trainloader)):
+        imgs = list(img.to(device) for img in imgs)
+        annotations = [{k: v.to(device) for k, v in t.items()} for t in annotations]
+        
+        
+
+        # get the proposal frames for the image_id
+
+        # crop and resize
+        # transforms.functional.crop(img, top, left, height, width)
+        transforms.Resize(SIZE)
+        
+
+        # ----------------
+        # Balancing the input
+        # ----------------
+        # Get groud truth
+        # What if there is no classes?
+        # -> Train on background.
+
+        # compute the IoU
+
+        # -> crops of the classes & crops of the backgroud
+
+        # balacing by percentage
+
+        # create batches of the 1 image proposals
+        # create the tagets
+
+        # predict the output
+        predicted_labels = model(balanced_data_batch)
+
+
         #Zero the gradients computed for each weight
         optimizer.zero_grad()
         #Forward pass your image through the network
@@ -232,16 +295,31 @@ for epoch in tqdm(range(num_epochs), unit='epoch'):
     #Comput the test accuracy
     test_correct = 0
     
-    
+    # =====================================================
     # Test
+    # =====================================================
     with torch.no_grad():
         model.eval()
-        for data, target in test_loader:
+        for imgs, annotations in testloader:
+
+            imgs = list(img.to(device) for img in imgs)
+            annotations = [{k: v.to(device) for k, v in t.items()} for t in annotations]
             
-            data = data.to(device)
-            target = target.to(device)
+            # get proposals
             
-            output = model(data)
+            # crop & resize
+
+
+            for prosals_batch in cropped_proposals:
+            
+                batch_output = model(proposals_batch)
+
+                output.append(batch_output)
+
+            singel_classes_boxes = NMS(output)
+            test_score = IoU(single_classes_boxes, GroundTruth)
+
+
             loss_test = criterion(output, target)
 
             predicted = output.argmax(1)
