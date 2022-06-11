@@ -1,3 +1,4 @@
+#%%
 import os
 import numpy as np
 import PIL.Image as Image
@@ -10,6 +11,8 @@ import torchvision.datasets as datasets
 from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
+
+from pycocotools.coco import COCO
 
 import time
 
@@ -24,13 +27,15 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 #%% load config
-DIR= os.getcwd()
-config = OmegaConf.load(f"{DIR}/config/project1.yaml")
+DIR= os.path.dirname(os.path.realpath(__file__))
+
+config = OmegaConf.load(f"{DIR}/config/project_1_2.yaml")
 
 _num_epoch = config.epoch
 _batch_size = config.batch_size
 _learning_rate = config.learning_rate
-_dropout = config.dropout
+
+N_WORKERS = 1
 
 #%% wandb init
 use_wandb =  False
@@ -78,7 +83,8 @@ class TacoDataset(torch.utils.data.Dataset):
         ann_ids = coco.getAnnIds(imgIds=img_id)
         # Dictionary: target coco_annotation file for an image
         coco_annotation = coco.loadAnns(ann_ids)
-        print(coco_annotation)
+        # print(coco_annotation)
+        
         # path for input image
         path = coco.loadImgs(img_id)[0]["file_name"]
         # open the input image
@@ -128,24 +134,65 @@ class TacoDataset(torch.utils.data.Dataset):
         return len(self.ids)
     
     
+#%% 
 
-    print("[INFO] Load datasets from disk...")
-    training_set = TacoDataset()
+print("[INFO] Load datasets from disk...")
+training_set = TacoDataset()
 
-    testing_set = TacoDataset()
+testing_set = TacoDataset()
 
-    print("[INFO] Prepare labeldataloaders...")
-    trainloader = torch.utils.data.DataLoader(
-        training_set, shuffle=True, num_workers=N_WORKERS, batch_size=BATCH_SIZE
-    )
-    testloader = torch.utils.data.DataLoader(
-        testing_set, shuffle=False, num_workers=N_WORKERS, batch_size=BATCH_SIZE
-    )
+print("[INFO] Prepare labeldataloaders...")
+trainloader = torch.utils.data.DataLoader(
+    training_set, shuffle=True, batch_size=_batch_size
+)
+testloader = torch.utils.data.DataLoader(
+    testing_set, shuffle=False, num_workers=N_WORKERS, batch_size=_batch_size
+)
 
-    trainloader_iter = iter(trainloader)
-    x, y = next(trainloader_iter)
+
+# trainloader_iter = iter(trainloader)
+# x, y = next(trainloader_iter)
     
+
+#%% Network
+
+class Network(nn.Module):
+    def __init__(self):
+        super(Network, self).__init__()
+        self.convolutional = nn.Sequential(
+                nn.Conv2d(in_channels=3,
+                        out_channels=8,
+                        kernel_size=(3,3),
+                        padding='same'),
+                nn.BatchNorm2d(8),
+                nn.ReLU(),
+                nn.Conv2d(in_channels=8,
+                          out_channels=8,
+                          kernel_size=(3,3),
+                         padding='same'),
+                nn.BatchNorm2d(8),
+                nn.ReLU(),
+                nn.Conv2d(in_channels=8,
+                          out_channels=16,
+                          kernel_size=(3,3),
+                         padding='same'),
+                nn.BatchNorm2d(16),
+        )
+
+        self.fully_connected = nn.Sequential(
+                nn.Linear(128*128*16, 500),
+                nn.ReLU(),
+                nn.Linear(500, 2),
+        )
     
+    def forward(self, x):
+        x = self.convolutional(x)
+        #reshape x so it becomes flat, except for the first dimension (which is the minibatch)
+        x = x.view(x.size(0), -1)
+        x = self.fully_connected(x)
+        return x
+
+
 model = Network()
 model.to(device)
 if use_wandb == True:
@@ -154,7 +201,7 @@ if use_wandb == True:
 
 #%% train
 
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+optimizer = torch.optim.Adam(model.parameters(), lr=_learning_rate)
 criterion = nn.CrossEntropyLoss()
 
 num_epochs = _num_epoch
@@ -166,7 +213,7 @@ for epoch in tqdm(range(num_epochs), unit='epoch'):
     #For each epoch
     train_correct = 0
     model.train()
-    for minibatch_no, (data, target) in tqdm(enumerate(train_loader), total=len(train_loader)):
+    for minibatch_no, (data, target) in tqdm(enumerate(trainloader), total=len(trainloader)):
         data, target = data.to(device), target.to(device)
         #Zero the gradients computed for each weight
         optimizer.zero_grad()
