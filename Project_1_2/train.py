@@ -15,6 +15,7 @@
 import os
 import sys
 import time
+import json
 
 import numpy as np
 import torch
@@ -46,27 +47,24 @@ DROPOUT_PROBABILITY = config.DROPOUT_PROBABILITY
 N_WORKERS = config.N_WORKERS
 VERSION = config.VERSION
 
-SPLITS_DISTRIBUTION = config.SPLITS_DISTRIBUTION
+SPLIT_DISTRIBUTION = config.SPLIT_DISTRIBUTION
 _version = 0
 
-sys.exit(-1)
+
 # get total dataset size
 dataset_size = 30000
-testing_set_size = int(SPLITS_DISTRIBUTION.test[_version] * dataset_size)
+testing_set_size = int(SPLIT_DISTRIBUTION.test[_version] * dataset_size)
 validation_set_size = int(
-    SPLITS_DISTRIBUTION.train[_version] * dataset_size * config.VALIDATION_SIZE
+    SPLIT_DISTRIBUTION.train[_version] * dataset_size * config.VALIDATION_SIZE
 )
 training_set_size = int(
-    SPLITS_DISTRIBUTION.train[_version] * dataset_size - validation_set_size
+    SPLIT_DISTRIBUTION.train[_version] * dataset_size - validation_set_size
 )
 
-print(
-    dataset_size,
-    testing_set_size,
-    validation_set_size,
-    training_set_size,
-    sum(testing_set_size, validation_set_size, training_set_size),
+train_dataset, valid_dataset, test_dataset = torch.utils.data.random_split(
+    _dataset (training_set_size, validation_set_size, testing_set_size)
 )
+
 sys.exit(-1)
 
 

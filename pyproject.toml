@@ -12,6 +12,7 @@ omegaconf = "^2.2.2"
 wandb = "^0.12.17"
 albumentations = "^1.1.0"
 tqdm = "^4.64.0"
+pycocotools = "^2.0.4"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"

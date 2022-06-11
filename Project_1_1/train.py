@@ -46,6 +46,10 @@ DROPOUT_PROBABILITY = config.DROPOUT_PROBABILITY
 N_WORKERS = config.N_WORKERS
 VERSION = config.VERSION
 
+# Model and checkpoint path
+BEST_MODEL_PATH = config.BEST_MODEL_PATH
+CHECKPOINT_PATH = config.CHECKPOINT_PATH
+
 print("[INFO] Load datasets from disk...")
 training_set = Dataset_fetcher(train=True, augment=False)
 testing_set = Dataset_fetcher(train=False, augment=False)
@@ -57,6 +61,10 @@ trainloader = torch.utils.data.DataLoader(
 testloader = torch.utils.data.DataLoader(
     testing_set, shuffle=False, num_workers=N_WORKERS, batch_size=BATCH_SIZE
 )
+
+# pop config variables which are not needed to track
+config.pop("BEST_MODEL_PATH")
+config.pop("CHECKPOINT_PATH")
 
 # Initialize logging with wandb and track conf settings
 wandb.init(project="VGG", config=dict(config), entity="dlincvg1")
@@ -86,6 +94,8 @@ def train() -> None:
         momentum=0.9,
         weight_decay=LEARNING_RATE / EPOCHS,
     )
+
+    wandb.config.update({"optimizer": optimizer, "loss_func": criterion})
 
     print("[INFO] Started training the model...\n")
     start_t = time.time()
@@ -179,7 +189,7 @@ def train() -> None:
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                 },
-                config.BEST_MODEL_PATH,
+                BEST_MODEL_PATH,
             )
 
         # Save model based on the frequency defined by "args.save_after"
@@ -191,20 +201,21 @@ def train() -> None:
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                 },
-                os.path.join(config.CHECKPOINT_PATH, f"epoch_{epoch + 1}.pth"),
+                os.path.join(CHECKPOINT_PATH, f"epoch_{epoch + 1}.pth"),
             )
 
             # early stopping
             early_stopping(train_loss, val_loss)
             if early_stopping.early_stop:
                 print(f"[INFO] Initializing Early stoppage at epoch: {epoch+1}...")
+                wandb.config.update({"EPOCHS": epoch + 1, "early_stoppage": True})
                 break
 
     end_t = time.time()
     run_time = end_t - start_t
 
     # if checkpoint folder is meant to be saved for each experiment
-    wandb.save(config.CHECKPOINT_PATH)
+    wandb.save(CHECKPOINT_PATH)
     print(
         f"[INFO] Successfully completed training session. Running time: {run_time/60:.2f} min"
     )
