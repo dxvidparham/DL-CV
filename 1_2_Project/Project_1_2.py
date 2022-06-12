@@ -19,6 +19,8 @@ import time
 
 from omegaconf import OmegaConf
 
+from IoU import intersection_over_union as IoU
+
 #%% Check if torch available
 if torch.cuda.is_available():
     print("The code will run on GPU.")
@@ -90,7 +92,7 @@ class TacoDataset(torch.utils.data.Dataset):
         # print(coco_annotation)
         
         # path for input image
-        path = coco.loadImgs(img_id)[index]["file_name"]
+        path = coco.loadImgs(img_id)[0]["file_name"]
         
         # open the input image
         img = Image.open(os.path.join(self.root, path))
@@ -180,33 +182,60 @@ class ProposalDataset(torch.utils.data.Dataset):
         #     ]
         # )
 
+        #--------------------------
         # load proposals
-        proposals = []
-        prop_name = img_annotations["path"].replace("jpg","txt")
+        #--------------------------
+        prop_name = self.img_annotations["path"].replace("jpg","txt")
         
         annotation_path = f"{DIR}/project2_ds_new/"+prop_name
         print(annotation_path)
+        
+        prop_anno_list = []
         with open(annotation_path) as f:
             proposal_list = f.readlines()
             for box_str in proposal_list:
                 prop_box = box_str.split()
-                proposals.append(prop_box)
+                prop_box = [int(i) for i in prop_box]
+                prop_anno_list.append(prop_box)
 
         prop_img_list = []
-        for prop in proposals:
-            prop_img_list.append(self.transform_img(self.img,prop))
+        for prop in prop_anno_list:
+            prop_img_list.append(self.transform_img(prop))
         
         # print("proposals")
         # print(proposals)
 
-        # Get groud truth
-        bboxes_gt = annotations["boxes"]
-
-        for bbox_gt in bboxes_gt:
-            
-            
-            prop_labels = 
+        #------------------------------------
+        # Compute proposal labels
+        #------------------------------------
         
+        # Get groud truth
+        bboxes_gt = self.img_annotations["boxes"]
+        labels_gt = self.img_annotations["labels"]
+
+        background_threshold = 0.5
+
+        prop_labels = []
+        for prop_anno in prop_anno_list:
+            prop_label = torch.tensor(0)
+            prop_anno = torch.tensor(prop_anno)
+            for gt_idx, bbox_gt in enumerate(bboxes_gt):
+                
+                if IoU(prop_anno, bbox_gt)>background_threshold:
+                    prop_label = labels_gt[gt_idx]
+       
+            
+            prop_labels.append(prop_label)
+
+        # print("Proposal labels")
+        # print(prop_labels)
+
+        #------------------------
+        # Balance Data
+        #------------------------
+        
+
+
         # What if there is no classes?
         # -> Train on background.
 
@@ -220,13 +249,13 @@ class ProposalDataset(torch.utils.data.Dataset):
         # create the tagets
 
 
-        # define transformer
-        self.convert_tensor = transforms.ToTensor()
+        # # define transformer
+        # self.convert_tensor = transforms.ToTensor()
     
-    def transform_img(img,prop):
-        prop_crop = transforms.functional.crop(prop[0],prop[1],prop[4]-prop[1],prop[3]-prop[0]) #TODO: be sure it works: top, left, height, width [xmin, ymin, xmax, ymax]
+    def transform_img(self, prop: list):
+        prop_crop = transforms.functional.crop(self.img, prop[0],prop[1],prop[3]-prop[1],prop[2]-prop[0]) #TODO: be sure it works: top, left, height, width [xmin, ymin, xmax, ymax]
         resized = transforms.functional.resize(prop_crop,SIZE)
-        return self.convert_tensor(img)
+        return resized
 
 
 
@@ -234,14 +263,6 @@ class ProposalDataset(torch.utils.data.Dataset):
         return img[:, ymin:ymax, xmin:xmax]
 
     def __getitem__(self, index):
-        
-        
-        
-        
-        
-        
-        
-        
         
         
         # Own coco file
