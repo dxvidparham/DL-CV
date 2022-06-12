@@ -174,16 +174,6 @@ class ProposalDataset(torch.utils.data.Dataset):
         # self.root = "/dtu/datasets1/02514/data_wastedetection/"
         # self.annotation = f"{self.root}/annotations.json"
         # self.coco = COCO(self.annotation)
-        # self.ids = list(sorted(self.coco.imgs.keys()))
-
-        
-        
-        # self.transform = transforms.Compose(
-        #     [
-        #         # transforms.Resize((size, size)),
-        #         transforms.ToTensor(),
-        #     ]
-        # )
 
         #--------------------------
         # load proposals
@@ -201,10 +191,14 @@ class ProposalDataset(torch.utils.data.Dataset):
                 prop_box = [int(i) for i in prop_box]
                 prop_anno_list.append(prop_box)
 
+        # crop and resize
         prop_img_list = []
         for prop in prop_anno_list:
             prop_img_list.append(self.transform_img(prop))
-        
+
+        for i in range(len(prop_img_list)):
+            print(prop_img_list[i].shape)
+    
         # print("proposals")
         # print(proposals)
 
@@ -218,7 +212,7 @@ class ProposalDataset(torch.utils.data.Dataset):
 
         background_threshold = 0.5
 
-        prop_labels = []
+        prop_labels_list = []
         for prop_anno in prop_anno_list:
             prop_label = torch.tensor(0)
             prop_anno = torch.tensor(prop_anno)
@@ -228,64 +222,24 @@ class ProposalDataset(torch.utils.data.Dataset):
                     prop_label = labels_gt[gt_idx]
        
             
-            prop_labels.append(prop_label)
+            prop_labels_list.append(prop_label)
 
         
 
-        # print("Proposal labels")
-        # print(prop_labels)
-
-        #------------------------
-        # Balance Data
-        #------------------------
-        
-        # background_cnt = self.listCount(prop_labels, 0)
-        # print(background_cnt)
-        # if background_cnt != len(prop_labels):
-        #     labels_cnt = len(prop_labels)-background_cnt
-        #     for idx, label in enumerate(prop_labels):
-        #         if labels_cnt/len(prop_labels) < 0.25:
-        #             print('total:',len(prop_labels))
-        #             print('ratio:', labels_cnt/len(prop_labels))
-        #             print("idx:", idx)
-        #             if label == torch.tensor(0):
-        #                 prop_labels.pop(idx)
-        #                 prop_img_list.pop(idx)
-        #         else:
-        #             break
-        # else: # only background
-        #     pass
-
-        # print("balanced set:")
-        # print("prop img size:", len(prop_img_list))
-        # print("prop label size:", len(prop_labels))
-        # print("backgnd cnt:", self.listCount(prop_labels, 0))
-        # for l in labels_gt:
-        #     print("label cnt:", l, self.listCount(prop_labels, l))
-
-        
-#         random.sample(range(1, 100), 3)
-# background_cnt = self.listCount(prop_labels, 0)
-#         print(background_cnt)
-#         if background_cnt != len(prop_labels):
-#             random.sample(range(0, ), 3)
-        # labels_cnt = len(prop_labels)-background_cnt
-        # for label in labels_gt:
-        #     if label in 
-        # background_list = 
-
-        self.class_sample_count = np.array([self.listCount(prop_labels, 0)])
+        self.class_sample_count = np.array([self.listCount(prop_labels_list, 0)])
         for l in labels_gt:
-            self.class_sample_count = np.append(self.class_sample_count, self.listCount(prop_labels, l))
+            self.class_sample_count = np.append(self.class_sample_count, self.listCount(prop_labels_list, l))
 
-        self.target = prop_labels
+        self.target = prop_labels_list
+        self.prop_img_list = prop_img_list
+        self.prop_bboxes_list = prop_anno_list
+
         
-         
- 
+
     
     def transform_img(self, prop: list):
         prop_crop = transforms.functional.crop(self.img, prop[0],prop[1],prop[3]-prop[1],prop[2]-prop[0]) #TODO: be sure it works: top, left, height, width [xmin, ymin, xmax, ymax]
-        resized = transforms.functional.resize(prop_crop,SIZE)
+        resized = transforms.functional.resize(prop_crop,(SIZE, SIZE))
         return resized
 
     def listCount(self, lst, x):
@@ -299,41 +253,31 @@ class ProposalDataset(torch.utils.data.Dataset):
         return img[:, ymin:ymax, xmin:xmax]
 
     def __getitem__(self, index):
-        
-        # Own coco file
-        coco = self.coco
-        # Image ID
-        img_id = self.img_annotations["image_id"]
-        # List: get annotation id from coco
-        ann_ids = coco.getAnnIds(imgIds=img_id)
-        # Dictionary: target coco_annotation file for an image
-        coco_annotation = coco.loadAnns(ann_ids)
-        # print(coco_annotation)
-        
-        # path for input image
-        path = coco.loadImgs(img_id)[0]["file_name"]
-        path = torch.tensor([path])
-        # open the input image
-        img = Image.open(os.path.join(self.root, path))
-        # print(img)
 
-        # number of objects in the image
-        num_objs = len(coco_annotation)
+        
+        
+        # # Own coco file
+        # coco = self.coco
+        # # Image ID
+        img_id = self.img_annotations["image_id"]
+        # # List: get annotation id from coco
+        # ann_ids = coco.getAnnIds(imgIds=img_id)
+        # # Dictionary: target coco_annotation file for an image
+        # coco_annotation = coco.loadAnns(ann_ids)
+        # # print(coco_annotation)
+        
+        
+        # open the input image
+        img = self.prop_img_list[index]
+
 
         # Bounding boxes for objects
         # In coco format, bbox = [xmin, ymin, width, height]
         # In pytorch, the input should be [xmin, ymin, xmax, ymax]
-        boxes = []
-        for i in range(num_objs):
-            xmin = coco_annotation[i]["bbox"][0]
-            ymin = coco_annotation[i]["bbox"][1]
-            xmax = xmin + coco_annotation[i]["bbox"][2]
-            ymax = ymin + coco_annotation[i]["bbox"][3]
-            boxes.append([xmin, ymin, xmax, ymax])
-
-        boxes = torch.as_tensor(boxes, dtype=torch.float32)
+        
+        boxes = self.prop_bboxes_list[index]
         # Labels (In my case, I only one class: target class or background)
-        labels = torch.ones((num_objs,), dtype=torch.int64)
+        labels = self.target
 
         # Tensorise img_id
         img_id = torch.tensor([img_id])
@@ -353,14 +297,11 @@ class ProposalDataset(torch.utils.data.Dataset):
             "path": path,
         }
 
-        if self.transform is not None:
-            img = self.transform(img)
-
 
         return img, my_annotation
 
     def __len__(self):
-        return len(self.ids)
+        return len(self.prop_bboxes_list)
 
 
 # =======================================
@@ -458,7 +399,7 @@ proploader = torch.utils.data.DataLoader(
 
 iterprop = iter(proploader)
 
-a,b = next(iterprop)
+# a,b = next(iterprop)
 
 
 # ------------------------------------
