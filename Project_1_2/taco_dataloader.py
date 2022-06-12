@@ -1,20 +1,28 @@
-import os
-import torch
-import torch.utils.data
-import torchvision
-from PIL import Image
-from pycocotools.coco import COCO
-import glob
+#!/usr/bin/env python3
+######################################################################
+# Authors:      <s203005> Karol Bogumil Krzak
+#                     <s202385> David Parham
+#                     <s202468> Alejandro Martinez Senent
+#                     <s202460> Christian Jannik Metz
+#
+# Course:        Deep Learning for Computer Vision
+# Semester:    June 2022
+# Institution:  Technical University of Denmark (DTU)
+#
+# Module: Create custom dataset for taco dataset
+######################################################################
+
 import os
 
-import albumentations
-import albumentations.pytorch
-import numpy as np
 import PIL.Image as Image
 import torch
+import torch.utils.data
 from omegaconf import OmegaConf
+from PIL import Image
+from pycocotools.coco import COCO
 from torchvision import transforms
-from utils import get_super_categories, collate_wrapper
+
+from utils import collate_wrapper, get_super_categories
 
 
 class TacoDataset(torch.utils.data.Dataset):
@@ -32,7 +40,7 @@ class TacoDataset(torch.utils.data.Dataset):
                 [
                     transforms.Resize((self.size, self.size)),
                     transforms.ToTensor(),
-                    # transforms.Lambda(lambda x: self.my_print(x)),
+                    # transforms.Lambda(lambda x: self._print_img_size(x)),
                 ]
             )
         else:
@@ -40,14 +48,14 @@ class TacoDataset(torch.utils.data.Dataset):
                 [
                     # transforms.Resize((self.size, self.size)),
                     transforms.ToTensor(),
-                    # transforms.Lambda(lambda x: self.my_print(x)),
+                    # transforms.Lambda(lambda x: self._print_img_size(x)),
                 ]
             )
 
     def crop_img(self, img, ymin, ymax, xmin, xmax):
         return img[:, ymin:ymax, xmin:xmax]
 
-    def my_print(self, img):
+    def _print_img_size(self, img):
         print(img.size())
         return img
 
@@ -60,41 +68,36 @@ class TacoDataset(torch.utils.data.Dataset):
         ann_ids = coco.getAnnIds(imgIds=img_id)
         # Dictionary: target coco_annotation file for an image
         coco_annotation = coco.loadAnns(ann_ids)
-        # print(coco_annotation)
 
         # path for input image
         path = coco.loadImgs(img_id)[0]["file_name"]
         # open the input image
         img = Image.open(os.path.join(self.root, path))
-        # print(img)
-
-        # number of objects in the image
-        num_objs = len(coco_annotation)
 
         # Bounding boxes for objects
         # In coco format, bbox = [xmin, ymin, width, height]
         # In pytorch, the input should be [xmin, ymin, xmax, ymax]
         boxes = []
         labels = []
+        iscrowd = []
+        areas = []
         for i, ann in enumerate(coco_annotation):
             if ann["category_id"] in self.classes.values():
                 xmin = coco_annotation[i]["bbox"][0]
                 ymin = coco_annotation[i]["bbox"][1]
                 xmax = xmin + coco_annotation[i]["bbox"][2]
                 ymax = ymin + coco_annotation[i]["bbox"][3]
+
                 boxes.append([xmin, ymin, xmax, ymax])
                 labels.append(ann["category_id"])
+                iscrowd.append(ann["iscrowd"])
+                areas.append(ann["area"])
 
+        img_id = torch.tensor([img_id])
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
         labels = torch.as_tensor(labels, dtype=torch.int64)
-
-        # Tensorise img_id
-        img_id = torch.tensor([img_id])
-        # Size of bbox (Rectangular)
-        areas = [coco_annotation[i]["area"] for i in range(num_objs)]
         areas = torch.as_tensor(areas, dtype=torch.float32)
-        # Iscrowd
-        iscrowd = torch.zeros((num_objs,), dtype=torch.int64)
+        iscrowd = torch.as_tensor(iscrowd, dtype=torch.int64)
 
         # Annotation is in dictionary format
         my_annotation = {
@@ -133,4 +136,4 @@ if __name__ == "__main__":
 
     dataloader_iter = iter(dataloader)
     x, y = next(dataloader_iter)
-    print(x, y)
+    print(x[0], y[0])
