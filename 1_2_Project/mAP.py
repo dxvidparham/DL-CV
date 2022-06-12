@@ -4,26 +4,28 @@ from collections import Counter
 from IoU import intersection_over_union
 
 def mean_average_precision(
-    pred_boxes, true_boxes, iou_threshold=0.5, box_format="midpoint", num_classes=20
-):
+    pred_boxes: list, true_boxes: list, iou_threshold=0.5, num_classes=20):
     """
-    In order to apply it we need all bboxes predictions on our test img from our network
-    Calculates mean average precision 
+    Evaluation of the detection network, in order to use it we need all the bounding_boxes predictions from all the test images 
+    Funstion calculates the most common metric for evaluation - mAP
+     
     Parameters:
-        pred_boxes (list): list of lists containing all bboxes with each bboxes
-        specified as [train_idx, class_prediction, prob_score, x1, y1, x2, y2]
-        true_boxes (list): Similar as pred_boxes except all the correct ones 
-        iou_threshold (float): threshold where predicted bboxes is correct
-        box_format (str): "midpoint" or "corners" used to specify bboxes
-        num_classes (int): number of classes
+        pred_boxes - list of lists containing all bounding_boxes with each bounding_boxes
+            in following format [train_idx, class_prediction, confidence score, x1, y1, x2, y2] /// train_idx - image idx?
+
+        true_boxes - same as pred_boxes just with ground truth bounding boxes
+
+        iou_threshold - threshold where predicted bounding_boxes is correct
+
+        num_classes -  number of classes
     Returns:
-        float: mAP value across all classes given a specific IoU threshold 
+         mAP -  value across all classes given a specific IoU threshold 
     """
 
-    # list storing all AP for respective classes
+    # list storing all AP(confidence) for respective classes
     average_precisions = []
 
-    # used for numerical stability later on
+    # used for numerical stability later on (smth that I read about)
     epsilon = 1e-6
 
     for c in range(num_classes):
@@ -41,11 +43,11 @@ def mean_average_precision(
             if true_box[1] == c:
                 ground_truths.append(true_box)
 
-        # find the amount of bboxes for each training example
-        # Counter here finds how many ground truth bboxes we get
+        # find the amount of bounding_boxes for each training example
+        # Counter here finds how many ground truth bounding_boxes we get
         # for each training example, so let's say img 0 has 3,
         # img 1 has 5 then we will obtain a dictionary with:
-        # amount_bboxes = {0:3, 1:5}
+        # amount_bounding_boxes = {0:3, 1:5}
         amount_bboxes = Counter([gt[0] for gt in ground_truths])
 
         # We then go through each key, val in this dictionary
@@ -66,7 +68,7 @@ def mean_average_precision(
 
         for detection_idx, detection in enumerate(detections):
             # Only take out the ground_truths that have the same
-            # training idx as detection
+            # training idx as detection so they belong to the same image
             ground_truth_img = [
                 bbox for bbox in ground_truths if bbox[0] == detection[0]
             ]
@@ -77,8 +79,7 @@ def mean_average_precision(
             for idx, gt in enumerate(ground_truth_img):
                 iou = intersection_over_union(
                     torch.tensor(detection[3:]),
-                    torch.tensor(gt[3:]),
-                    box_format=box_format,
+                    torch.tensor(gt[3:])
                 )
 
                 if iou > best_iou:
