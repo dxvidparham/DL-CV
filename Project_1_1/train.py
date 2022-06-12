@@ -51,7 +51,7 @@ BEST_MODEL_PATH = config.BEST_MODEL_PATH
 CHECKPOINT_PATH = config.CHECKPOINT_PATH
 
 print("[INFO] Load datasets from disk...")
-training_set = Dataset_fetcher(train=True, augment=False)
+training_set = Dataset_fetcher(train=True, augment=True)
 testing_set = Dataset_fetcher(train=False, augment=False)
 
 print("[INFO] Prepare dataloaders...")

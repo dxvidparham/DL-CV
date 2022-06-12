@@ -60,7 +60,6 @@ class Hotdog_NotHotdog(torch.utils.data.Dataset):
                         [
                             albumentations.RandomBrightness(p=1),
                             albumentations.RandomBrightnessContrast(p=1),
-                            albumentations.VerticalFlip(p=1),
                         ],
                         p=0.25,
                     ),
