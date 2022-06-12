@@ -90,8 +90,8 @@ class TacoDataset(torch.utils.data.Dataset):
         # print(coco_annotation)
         
         # path for input image
-        path = coco.loadImgs(img_id)[0]["file_name"]
-        path = torch.tensor([path])
+        path = coco.loadImgs(img_id)[index]["file_name"]
+        
         # open the input image
         img = Image.open(os.path.join(self.root, path))
         # print(img)
@@ -145,45 +145,26 @@ class TacoDataset(torch.utils.data.Dataset):
         # print("")
 
 
-
-        # for index in range(len(imgs)):
-    
-
-        #     # get the proposal frames for the image_id
-        #     proposals = []
-        #     img_id = annotations[index]["image_id"]
-        #     000000
-        #     annotation_path = f"{DIR}/proposal_annotations/"+str(img_id)+".txt"
-        #     print(annotation_path)
-        #     with open('','000000.txt') as f:
-        #         proposal_list = f.readlines()
-        #         for box_str in proposal_list:
-        #             prop_box = box_str.split()
-        #             proposals.append(prop_box)
-
-
-        #     # crop and resize
-        #     img_list = []
-        #     for prop in proposals:
-        #         prop_crop = transforms.functional.crop(prop[0],prop[1],prop[4]-prop[1],prop[3]-prop[0]) #TODO: be sure it works: top, left, height, width [xmin, ymin, xmax, ymax]
-        #         img_list.append(transforms.functional.resize(prop_crop,SIZE))
-
-        #     proposals_torch = torch.stack(img_list)
-
-
         return img, my_annotation
 
+    def __len__(self):
+        return len(self.ids)
+    
 
 
 
 
+# ======================================================
 #%% Proposal Set
 
 class ProposalDataset(torch.utils.data.Dataset):
-    def __init__(self, img=None, annotations=None, size=SIZE):
+    def __init__(self, img=None, img_annotations=None, size=SIZE):
 
         assert img is not None, "image for proposals"
-        assert annotations is not None, "annotations of proposals"
+        assert img_annotations is not None, "annotations of proposals"
+
+        self.img_annotations = img_annotations
+        self.img = img
 
         # self.root = "/dtu/datasets1/02514/data_wastedetection/"
         # self.annotation = f"{self.root}/annotations.json"
@@ -199,17 +180,47 @@ class ProposalDataset(torch.utils.data.Dataset):
         #     ]
         # )
 
+        # load proposals
         proposals = []
-        img_id = annotations["image_id"]
-        000000
-        annotation_path = f"{DIR}/proposal_annotations/"+str(img_id)+".txt"
+        prop_name = img_annotations["path"].replace("jpg","txt")
+        
+        annotation_path = f"{DIR}/project2_ds_new/"+prop_name
         print(annotation_path)
-        with open('','000000.txt') as f:
+        with open(annotation_path) as f:
             proposal_list = f.readlines()
             for box_str in proposal_list:
                 prop_box = box_str.split()
                 proposals.append(prop_box)
 
+        prop_img_list = []
+        for prop in proposals:
+            prop_img_list.append(self.transform_img(self.img,prop))
+        
+        # print("proposals")
+        # print(proposals)
+
+        # Get groud truth
+        bboxes_gt = annotations["boxes"]
+
+        for bbox_gt in bboxes_gt:
+            
+            
+            prop_labels = 
+        
+        # What if there is no classes?
+        # -> Train on background.
+
+        # compute the IoU
+
+        # -> crops of the classes & crops of the backgroud
+
+        # balacing by percentage
+
+        # create batches of the 1 image proposals
+        # create the tagets
+
+
+        # define transformer
         self.convert_tensor = transforms.ToTensor()
     
     def transform_img(img,prop):
@@ -223,10 +234,20 @@ class ProposalDataset(torch.utils.data.Dataset):
         return img[:, ymin:ymax, xmin:xmax]
 
     def __getitem__(self, index):
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         # Own coco file
         coco = self.coco
         # Image ID
-        img_id = self.ids[index]
+        img_id = self.img_annotations["image_id"]
         # List: get annotation id from coco
         ann_ids = coco.getAnnIds(imgIds=img_id)
         # Dictionary: target coco_annotation file for an image
@@ -286,7 +307,87 @@ class ProposalDataset(torch.utils.data.Dataset):
         return len(self.ids)
 
 
+# =======================================
+#%% test prop loader
 
+root = "/dtu/datasets1/02514/data_wastedetection/"
+annotation = f"{root}/annotations.json"
+coco = COCO(annotation)
+ids = list(sorted(coco.imgs.keys()))
+
+img_id = ids[0]
+
+# path for input image
+path = coco.loadImgs(img_id)[0]["file_name"]
+
+# open the input image
+img = Image.open(os.path.join(root, path))
+
+transform = transforms.Compose(
+            [
+                # transforms.Resize((size, size)),
+                transforms.ToTensor(),
+            ]
+        )
+img = transform(img)
+
+
+ann_ids = coco.getAnnIds(imgIds=img_id)
+# Dictionary: target coco_annotation file for an image
+coco_annotation = coco.loadAnns(ann_ids)
+# print(coco_annotation)
+
+# path for input image
+path = coco.loadImgs(img_id)[0]["file_name"]
+
+# number of objects in the image
+num_objs = len(coco_annotation)
+
+# Bounding boxes for objects
+# In coco format, bbox = [xmin, ymin, width, height]
+# In pytorch, the input should be [xmin, ymin, xmax, ymax]
+boxes = []
+for i in range(num_objs):
+    xmin = coco_annotation[i]["bbox"][0]
+    ymin = coco_annotation[i]["bbox"][1]
+    xmax = xmin + coco_annotation[i]["bbox"][2]
+    ymax = ymin + coco_annotation[i]["bbox"][3]
+    boxes.append([xmin, ymin, xmax, ymax])
+
+boxes = torch.as_tensor(boxes, dtype=torch.float32)
+# Labels (In my case, I only one class: target class or background)
+labels = torch.ones((num_objs,), dtype=torch.int64)
+
+# Tensorise img_id
+img_id = torch.tensor([img_id])
+# Size of bbox (Rectangular)
+areas = [coco_annotation[i]["area"] for i in range(num_objs)]
+areas = torch.as_tensor(areas, dtype=torch.float32)
+# Iscrowd
+iscrowd = torch.zeros((num_objs,), dtype=torch.int64)
+
+# Annotation is in dictionary format
+my_annotation = {
+    "boxes": boxes,
+    "labels": labels,
+    "image_id": img_id,
+    "area": areas,
+    "iscrowd": iscrowd,
+    "path": path,
+}
+
+
+propset = ProposalDataset(img,my_annotation)
+proploader = torch.utils.data.DataLoader(
+    propset, shuffle=False, batch_size=_batch_size,
+)
+
+iterprop = iter(proploader)
+
+a,b = next(iterprop)
+
+
+# ------------------------------------
 #%%  just to try if it works
 
 # a simple custom collate function, just to show the idea
@@ -304,15 +405,31 @@ try_loader = torch.utils.data.DataLoader(
 )
 
 
-
-
-trainloader_iter = iter(try_loader)
-
-for minibatch_no, (imgs, annotations) in enumerate(try_loader):
+for minibatch_no, data in enumerate(try_loader):
+        (imgs, annotations) = data
         imgs = list(img.to(device) for img in imgs)
         # annotations = [{k: v.to(device) for k, v in t.items()} for t in annotations]
         print(imgs)
         print(annotations)
+
+        for idx in range(len(data)):
+            print('-----------------')
+            print('single image')
+            print('-----------------')
+            # s_data=data
+            s_img = data[0][idx]
+            s_anno = data[1][idx]
+
+            try_porp_set = ProposalDataset()
+            try_prop_loader = torch.utils.data.DataLoader(
+                        try_porp_set, shuffle=False, batch_size=_batch_size
+                    )
+            # train on batches of props of 1 img
+
+            for prop_batch, data in enumerate(try_prop_loader):
+                print(data)
+            
+
         
 
 
@@ -320,9 +437,9 @@ for minibatch_no, (imgs, annotations) in enumerate(try_loader):
 # x, y = next(trainloader_iter)
 
     
-    
-#%% 
-
+#===============================================================    
+#%% Load data
+#===============================================================
 
 # a simple custom collate function, just to show the idea
 def my_collate(batch):
