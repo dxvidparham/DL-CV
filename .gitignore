@@ -131,3 +131,13 @@ dmypy.json
 
 #wandb
 /wandb/**
+/Project_1_1/wandb/**
+/Project_1_2/wandb/**
+
+#models
+/Project_1_1/models/checkpoints/*
+/Project_1_2/models/checkpoints/*
+
+#data
+/Project_1_1/data/**
+/Project_1_2/data/**

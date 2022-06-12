@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "DL-CV"
+version = "0.1.0"
+description = ""
+authors = ["david <s202385@student.dtu.dk>"]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+torch = "^1.11.0"
+torchvision = "^0.12.0"
+omegaconf = "^2.2.2"
+wandb = "^0.12.17"
+albumentations = "^1.1.0"
+tqdm = "^4.64.0"
+pycocotools = "^2.0.4"
+
+[tool.poetry.dev-dependencies]
+pytest = "^5.2"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

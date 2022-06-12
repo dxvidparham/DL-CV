@@ -1,0 +1,24 @@
+#config.yaml
+
+EPOCHS: 100
+BATCH_SIZE: 32
+LEARNING_RATE: 1e-4
+DROPOUT_PROBABILITY: 0.2
+
+N_WORKERS: 4
+BEST_VAL: 100000000
+
+BEST_MODEL_PATH: "models/checkpoints/best_model.pth"
+CHECKPOINT_PATH: "models/checkpoints/"
+
+IMG_SIZE: 224
+
+# VGG11, VGG13, VGG16, VGG19
+VERSION: "VGG11"
+
+SPLIT_DISTRIBUTION:
+  train: [0.67, 0.75, 0.90]
+  test: [0.33, 0.25, 0.10]
+
+
+VALIDATION_SIZE: 0.10
