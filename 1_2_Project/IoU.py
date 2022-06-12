@@ -7,6 +7,9 @@ def intersection_over_union(boxes_preds: torch.tensor, boxes_labels: torch.tenso
     Box1 = [x1, y1, x2, y2]
     Box2 = [x1, y1, x2, y2]
 
+    Returns:
+        intersection area of two boxes (float)
+
     """
     box1_x1 = boxes_preds[..., 0:1]
     box1_y1 = boxes_preds[..., 1:2]

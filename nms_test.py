@@ -102,7 +102,7 @@ def nms_pytorch(P : torch.tensor ,thresh_iou : float):
     return keep
 
 #%%
-# Let P be the following
+# Let P be the following, each row is a bounding box
 P = torch.tensor([
     [1, 1, 3, 3, 0.95],
     [1, 1, 3, 4, 0.93],

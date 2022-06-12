@@ -3,8 +3,8 @@ from IoU import intersection_over_union
 
 def nms(bounding_boxes: list, iou_threshold: float, threshold: float):
     """
-    NSM ahs to be done on each class separatly 
-    bboxes - each elements of a list of lists [[class, probability of that clas aka confidence score, coordinates fo the box], [], []] all of the same class
+    NSM has to be done on each class separatly 
+    bounding_boxes - each elements of a list of lists [[class, probability of that clas aka confidence score, coordinates fo the box], [], []] all of the same class
         list of lists containing all bboxes with each bboxes specified as [class_pred, prob_score, x1, y1, x2, y2]
     iou_threshold - value above which boxes are removed
     threshold - some additional trsh whne we remove boxes independetly of IoU
