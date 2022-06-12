@@ -46,10 +46,36 @@ def get_category_image_ids(coco_obj, category):
     return img_ids, cat_ids
 
 
+def get_super_categories(coco_obj):
+    coco = coco_obj
+    super_cat_ids = {}
+    super_cat_last_name = ""
+    nr_super_cats = 0
+    for _, cat_it in coco.cats.items():
+        super_cat_name = cat_it["supercategory"]
+
+        if super_cat_name != super_cat_last_name:
+            super_cat_ids[super_cat_name] = cat_it["id"]
+            super_cat_last_name = super_cat_name
+            nr_super_cats += 1
+
+    return super_cat_ids
+
+
+# a simple custom collate function, just to show the idea
+def collate_wrapper(batch):
+    data = [item[0] for item in batch]
+    my_annotation = [item[1] for item in batch]
+    # target = torch.LongTensor(target)
+
+    return [data, my_annotation]
+
+
 if __name__ == "__main__":
     dataset_path = "/dtu/datasets1/02514/data_wastedetection/"
     anns_file_path = f"{dataset_path}/annotations.json"
 
     # Loads dataset as a coco object
     coco = COCO(anns_file_path)
-    get_category_image_ids(coco, "Bottle")
+    # get_category_image_ids(coco, "Bottle")
+    print(get_super_categories(coco))

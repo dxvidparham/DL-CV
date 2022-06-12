@@ -18,7 +18,9 @@ from torch.utils.data.sampler import WeightedRandomSampler
 from torchvision import datasets
 from omegaconf import OmegaConf
 import os
+import sys
 from taco_dataloader import TacoDataset
+from utils import collate_wrapper
 
 # Load config file
 BASE_DIR = os.getcwd()
@@ -33,10 +35,6 @@ N_WORKERS = config.N_WORKERS
 SPLIT_DISTRIBUTION = config.SPLIT_DISTRIBUTION
 _version = 0
 
-classes = ["Plastic bag & wrapper", "Cigarette", "Bottle", "Carton", "Cup"]
-
-# Classes needs to be passed to TacoDataset, so to only source images wich belong to those classes
-
 dataset = TacoDataset()
 dataset_size = dataset.__len__()
 train_count = int(SPLIT_DISTRIBUTION.train[_version] * dataset_size)
@@ -50,23 +48,27 @@ train_dataset, test_dataset, val_dataset = torch.utils.data.random_split(
 )
 
 
-y_train_indices = train_dataset.indices
-print(y_train_indices)
+# y_train_indices = train_dataset.indices
+# print(y_train_indices)
 
-y_train = [dataset.targets[i] for i in y_train_indices]
+# y_train = [dataset.targets[i] for i in y_train_indices]
 
-class_sample_count = np.array(
-    [len(np.where(y_train == t)[0]) for t in np.unique(y_train)]
-)
+# class_sample_count = np.array(
+#     [len(np.where(y_train == t)[0]) for t in np.unique(y_train)]
+# )
 
-weight = 1.0 / class_sample_count
-samples_weight = np.array([weight[t] for t in y_train])
-samples_weight = torch.from_numpy(samples_weight)
-sampler = WeightedRandomSampler(
-    samples_weight.type("torch.DoubleTensor"), len(samples_weight)
-)
+# weight = 1.0 / class_sample_count
+# samples_weight = np.array([weight[t] for t in y_train])
+# samples_weight = torch.from_numpy(samples_weight)
+# sampler = WeightedRandomSampler(
+#     samples_weight.type("torch.DoubleTensor"), len(samples_weight)
+# )
 
 print("[INFO] Prepare labeldataloaders...")
 trainloader = torch.utils.data.DataLoader(
-    train_dataset, shuffle=True, num_workers=N_WORKERS, batch_size=BATCH_SIZE
+    train_dataset,
+    shuffle=True,
+    num_workers=N_WORKERS,
+    batch_size=BATCH_SIZE,
+    collate_fn=collate_wrapper,
 )

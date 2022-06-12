@@ -14,6 +14,7 @@ import PIL.Image as Image
 import torch
 from omegaconf import OmegaConf
 from torchvision import transforms
+from utils import get_super_categories, collate_wrapper
 
 
 class TacoDataset(torch.utils.data.Dataset):
@@ -22,25 +23,33 @@ class TacoDataset(torch.utils.data.Dataset):
         self.annotation = f"{self.root}/annotations.json"
         self.coco = COCO(self.annotation)
         self.ids = list(sorted(self.coco.imgs.keys()))
+        self.size = 224
+        self.classes = get_super_categories(self.coco)
 
         self.augment = augment
         if self.augment:
             self.transform = transforms.Compose(
                 [
-                    # transforms.Resize((size, size)),
+                    transforms.Resize((self.size, self.size)),
                     transforms.ToTensor(),
+                    # transforms.Lambda(lambda x: self.my_print(x)),
                 ]
             )
         else:
             self.transform = transforms.Compose(
                 [
-                    # transforms.Resize((size, size)),
+                    # transforms.Resize((self.size, self.size)),
                     transforms.ToTensor(),
+                    # transforms.Lambda(lambda x: self.my_print(x)),
                 ]
             )
 
     def crop_img(self, img, ymin, ymax, xmin, xmax):
         return img[:, ymin:ymax, xmin:xmax]
+
+    def my_print(self, img):
+        print(img.size())
+        return img
 
     def __getitem__(self, index):
         # Own coco file
@@ -51,11 +60,13 @@ class TacoDataset(torch.utils.data.Dataset):
         ann_ids = coco.getAnnIds(imgIds=img_id)
         # Dictionary: target coco_annotation file for an image
         coco_annotation = coco.loadAnns(ann_ids)
-        print(coco_annotation)
+        # print(coco_annotation)
+
         # path for input image
         path = coco.loadImgs(img_id)[0]["file_name"]
         # open the input image
         img = Image.open(os.path.join(self.root, path))
+        # print(img)
 
         # number of objects in the image
         num_objs = len(coco_annotation)
@@ -64,16 +75,18 @@ class TacoDataset(torch.utils.data.Dataset):
         # In coco format, bbox = [xmin, ymin, width, height]
         # In pytorch, the input should be [xmin, ymin, xmax, ymax]
         boxes = []
-        for i in range(num_objs):
-            xmin = coco_annotation[i]["bbox"][0]
-            ymin = coco_annotation[i]["bbox"][1]
-            xmax = xmin + coco_annotation[i]["bbox"][2]
-            ymax = ymin + coco_annotation[i]["bbox"][3]
-            boxes.append([xmin, ymin, xmax, ymax])
+        labels = []
+        for i, ann in enumerate(coco_annotation):
+            if ann["category_id"] in self.classes.values():
+                xmin = coco_annotation[i]["bbox"][0]
+                ymin = coco_annotation[i]["bbox"][1]
+                xmax = xmin + coco_annotation[i]["bbox"][2]
+                ymax = ymin + coco_annotation[i]["bbox"][3]
+                boxes.append([xmin, ymin, xmax, ymax])
+                labels.append(ann["category_id"])
 
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
-        # Labels (In my case, I only one class: target class or background)
-        labels = torch.ones((num_objs,), dtype=torch.int64)
+        labels = torch.as_tensor(labels, dtype=torch.int64)
 
         # Tensorise img_id
         img_id = torch.tensor([img_id])
@@ -107,15 +120,17 @@ if __name__ == "__main__":
     config = OmegaConf.load(f"{BASE_DIR}/config/config.yaml")
 
     print("[INFO] Load datasets from disk...")
-    dataset = TacoDataset()
+    dataset = TacoDataset(augment=False)
 
-    print("[INFO] Prepare labeldataloaders...")
+    print("[INFO] Prepare dataloaders...")
     dataloader = torch.utils.data.DataLoader(
         dataset,
         shuffle=True,
-        num_workers=config.N_WORKERS
-        batch_size=config.BATCH_SIZE
+        num_workers=config.N_WORKERS,
+        batch_size=config.BATCH_SIZE,
+        collate_fn=collate_wrapper,
     )
 
     dataloader_iter = iter(dataloader)
     x, y = next(dataloader_iter)
+    print(x, y)
