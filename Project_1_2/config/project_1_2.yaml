@@ -1,0 +1,7 @@
+batch_size: 32
+epoch: 15
+learning_rate: 0.0001
+model: "vgg19"
+pretrained: True
+size: 250
+size_prop_batch: 32
