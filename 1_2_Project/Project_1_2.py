@@ -1,5 +1,6 @@
 #%%
 import os
+from matplotlib import image
 import numpy as np
 import PIL.Image as Image
 from tqdm import tqdm
@@ -231,7 +232,9 @@ if use_wandb == True:
     wandb.watch(model, log_freq=100)
 
 
-#%% train
+#%% ===================================================================
+# train
+# =====================================================================
 
 optimizer = torch.optim.Adam(model.parameters(), lr=_learning_rate)
 criterion = nn.CrossEntropyLoss()
@@ -252,16 +255,37 @@ for epoch in tqdm(range(num_epochs), unit='epoch'):
         
 
         # get the proposal frames for the image_id
+        proposals = []
+        img_id = annotations["image_id"]
+        with open('000000.txt') as f:
+            proposal_list = f.readlines()
+            for box_str in proposal_list:
+                prop_box = box_str.split()
+                proposals.append(prop_box)
+
 
         # crop and resize
-        # transforms.functional.crop(img, top, left, height, width)
-        transforms.Resize(SIZE)
-        
+        img_list = []
+        for prop in proposals:
+            prop_crop = transforms.functional.crop(prop[0],prop[1],prop[4]-prop[1],prop[3]-prop[0]) #TODO: be sure it works: top, left, height, width [xmin, ymin, xmax, ymax]
+            img_list.append(transforms.functional.resize(prop_crop,SIZE))
+
+        proposals_torch = torch.stack(img_list)
+
+        # print('img:',img.shape)
+        # print('box:',my_annotation["boxes"].shape)
+        # print('labels:',my_annotation["labels"].shape)
+        # print('image_id:',my_annotation["image_id"].shape)
+        # print('area:',my_annotation["area"].shape)
+        # print('iscrowd:',my_annotation["iscrowd"].shape)
+        # print("")
 
         # ----------------
         # Balancing the input
         # ----------------
         # Get groud truth
+        bbox_gt = annotations["boxes"]
+        
         # What if there is no classes?
         # -> Train on background.
 
