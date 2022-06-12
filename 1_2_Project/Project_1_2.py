@@ -91,6 +91,7 @@ class TacoDataset(torch.utils.data.Dataset):
         
         # path for input image
         path = coco.loadImgs(img_id)[0]["file_name"]
+        path = torch.tensor([path])
         # open the input image
         img = Image.open(os.path.join(self.root, path))
         # print(img)
@@ -128,6 +129,7 @@ class TacoDataset(torch.utils.data.Dataset):
             "image_id": img_id,
             "area": areas,
             "iscrowd": iscrowd,
+            "path": path,
         }
 
         if self.transform is not None:
@@ -143,13 +145,184 @@ class TacoDataset(torch.utils.data.Dataset):
         # print("")
 
 
+
+        # for index in range(len(imgs)):
+    
+
+        #     # get the proposal frames for the image_id
+        #     proposals = []
+        #     img_id = annotations[index]["image_id"]
+        #     000000
+        #     annotation_path = f"{DIR}/proposal_annotations/"+str(img_id)+".txt"
+        #     print(annotation_path)
+        #     with open('','000000.txt') as f:
+        #         proposal_list = f.readlines()
+        #         for box_str in proposal_list:
+        #             prop_box = box_str.split()
+        #             proposals.append(prop_box)
+
+
+        #     # crop and resize
+        #     img_list = []
+        #     for prop in proposals:
+        #         prop_crop = transforms.functional.crop(prop[0],prop[1],prop[4]-prop[1],prop[3]-prop[0]) #TODO: be sure it works: top, left, height, width [xmin, ymin, xmax, ymax]
+        #         img_list.append(transforms.functional.resize(prop_crop,SIZE))
+
+        #     proposals_torch = torch.stack(img_list)
+
+
+        return img, my_annotation
+
+
+
+
+
+#%% Proposal Set
+
+class ProposalDataset(torch.utils.data.Dataset):
+    def __init__(self, img=None, annotations=None, size=SIZE):
+
+        assert img is not None, "image for proposals"
+        assert annotations is not None, "annotations of proposals"
+
+        # self.root = "/dtu/datasets1/02514/data_wastedetection/"
+        # self.annotation = f"{self.root}/annotations.json"
+        # self.coco = COCO(self.annotation)
+        # self.ids = list(sorted(self.coco.imgs.keys()))
+
+        
+        
+        # self.transform = transforms.Compose(
+        #     [
+        #         # transforms.Resize((size, size)),
+        #         transforms.ToTensor(),
+        #     ]
+        # )
+
+        proposals = []
+        img_id = annotations["image_id"]
+        000000
+        annotation_path = f"{DIR}/proposal_annotations/"+str(img_id)+".txt"
+        print(annotation_path)
+        with open('','000000.txt') as f:
+            proposal_list = f.readlines()
+            for box_str in proposal_list:
+                prop_box = box_str.split()
+                proposals.append(prop_box)
+
+        self.convert_tensor = transforms.ToTensor()
+    
+    def transform_img(img,prop):
+        prop_crop = transforms.functional.crop(prop[0],prop[1],prop[4]-prop[1],prop[3]-prop[0]) #TODO: be sure it works: top, left, height, width [xmin, ymin, xmax, ymax]
+        resized = transforms.functional.resize(prop_crop,SIZE)
+        return self.convert_tensor(img)
+
+
+
+    def crop_img(self, img, ymin, ymax, xmin, xmax):
+        return img[:, ymin:ymax, xmin:xmax]
+
+    def __getitem__(self, index):
+        # Own coco file
+        coco = self.coco
+        # Image ID
+        img_id = self.ids[index]
+        # List: get annotation id from coco
+        ann_ids = coco.getAnnIds(imgIds=img_id)
+        # Dictionary: target coco_annotation file for an image
+        coco_annotation = coco.loadAnns(ann_ids)
+        # print(coco_annotation)
+        
+        # path for input image
+        path = coco.loadImgs(img_id)[0]["file_name"]
+        path = torch.tensor([path])
+        # open the input image
+        img = Image.open(os.path.join(self.root, path))
+        # print(img)
+
+        # number of objects in the image
+        num_objs = len(coco_annotation)
+
+        # Bounding boxes for objects
+        # In coco format, bbox = [xmin, ymin, width, height]
+        # In pytorch, the input should be [xmin, ymin, xmax, ymax]
+        boxes = []
+        for i in range(num_objs):
+            xmin = coco_annotation[i]["bbox"][0]
+            ymin = coco_annotation[i]["bbox"][1]
+            xmax = xmin + coco_annotation[i]["bbox"][2]
+            ymax = ymin + coco_annotation[i]["bbox"][3]
+            boxes.append([xmin, ymin, xmax, ymax])
+
+        boxes = torch.as_tensor(boxes, dtype=torch.float32)
+        # Labels (In my case, I only one class: target class or background)
+        labels = torch.ones((num_objs,), dtype=torch.int64)
+
+        # Tensorise img_id
+        img_id = torch.tensor([img_id])
+        # Size of bbox (Rectangular)
+        areas = [coco_annotation[i]["area"] for i in range(num_objs)]
+        areas = torch.as_tensor(areas, dtype=torch.float32)
+        # Iscrowd
+        iscrowd = torch.zeros((num_objs,), dtype=torch.int64)
+
+        # Annotation is in dictionary format
+        my_annotation = {
+            "boxes": boxes,
+            "labels": labels,
+            "image_id": img_id,
+            "area": areas,
+            "iscrowd": iscrowd,
+            "path": path,
+        }
+
+        if self.transform is not None:
+            img = self.transform(img)
+
+
         return img, my_annotation
 
     def __len__(self):
         return len(self.ids)
+
+
+
+#%%  just to try if it works
+
+# a simple custom collate function, just to show the idea
+def my_collate(batch):
+    data = [item[0] for item in batch]
+    my_annotation = [item[1] for item in batch]
+    # target = torch.LongTensor(target)
+
+    return [data, my_annotation]
+
+try_set = TacoDataset()
+
+try_loader = torch.utils.data.DataLoader(
+    try_set, shuffle=False, batch_size=_batch_size, collate_fn = my_collate
+)
+
+
+
+
+trainloader_iter = iter(try_loader)
+
+for minibatch_no, (imgs, annotations) in enumerate(try_loader):
+        imgs = list(img.to(device) for img in imgs)
+        # annotations = [{k: v.to(device) for k, v in t.items()} for t in annotations]
+        print(imgs)
+        print(annotations)
+        
+
+
+
+# x, y = next(trainloader_iter)
+
     
     
 #%% 
+
 
 # a simple custom collate function, just to show the idea
 def my_collate(batch):
@@ -250,27 +423,9 @@ for epoch in tqdm(range(num_epochs), unit='epoch'):
     model.train()
     for minibatch_no, (imgs, annotations) in tqdm(enumerate(trainloader), total=len(trainloader)):
         imgs = list(img.to(device) for img in imgs)
-        annotations = [{k: v.to(device) for k, v in t.items()} for t in annotations]
+        # annotations = [{k: v.to(device) for k, v in t.items()} for t in annotations]
         
         
-
-        # get the proposal frames for the image_id
-        proposals = []
-        img_id = annotations["image_id"]
-        with open('000000.txt') as f:
-            proposal_list = f.readlines()
-            for box_str in proposal_list:
-                prop_box = box_str.split()
-                proposals.append(prop_box)
-
-
-        # crop and resize
-        img_list = []
-        for prop in proposals:
-            prop_crop = transforms.functional.crop(prop[0],prop[1],prop[4]-prop[1],prop[3]-prop[0]) #TODO: be sure it works: top, left, height, width [xmin, ymin, xmax, ymax]
-            img_list.append(transforms.functional.resize(prop_crop,SIZE))
-
-        proposals_torch = torch.stack(img_list)
 
         # print('img:',img.shape)
         # print('box:',my_annotation["boxes"].shape)
@@ -385,3 +540,5 @@ for epoch in tqdm(range(num_epochs), unit='epoch'):
     print(
         f"[INFO] Successfully completed training session. Running time: {run_time/60:.2f} min"
     )
+
+# %%
