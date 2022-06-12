@@ -11,11 +11,14 @@ import torch.nn.functional as F
 import torchvision.datasets as datasets
 from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
+from torch.utils.data.sampler import WeightedRandomSampler
+
 import matplotlib.pyplot as plt
 
 from pycocotools.coco import COCO
 
 import time
+import random
 
 from omegaconf import OmegaConf
 
@@ -227,6 +230,8 @@ class ProposalDataset(torch.utils.data.Dataset):
             
             prop_labels.append(prop_label)
 
+        
+
         # print("Proposal labels")
         # print(prop_labels)
 
@@ -234,36 +239,66 @@ class ProposalDataset(torch.utils.data.Dataset):
         # Balance Data
         #------------------------
         
+        # background_cnt = self.listCount(prop_labels, 0)
+        # print(background_cnt)
+        # if background_cnt != len(prop_labels):
+        #     labels_cnt = len(prop_labels)-background_cnt
+        #     for idx, label in enumerate(prop_labels):
+        #         if labels_cnt/len(prop_labels) < 0.25:
+        #             print('total:',len(prop_labels))
+        #             print('ratio:', labels_cnt/len(prop_labels))
+        #             print("idx:", idx)
+        #             if label == torch.tensor(0):
+        #                 prop_labels.pop(idx)
+        #                 prop_img_list.pop(idx)
+        #         else:
+        #             break
+        # else: # only background
+        #     pass
 
+        # print("balanced set:")
+        # print("prop img size:", len(prop_img_list))
+        # print("prop label size:", len(prop_labels))
+        # print("backgnd cnt:", self.listCount(prop_labels, 0))
+        # for l in labels_gt:
+        #     print("label cnt:", l, self.listCount(prop_labels, l))
 
-        # What if there is no classes?
-        # -> Train on background.
+        
+#         random.sample(range(1, 100), 3)
+# background_cnt = self.listCount(prop_labels, 0)
+#         print(background_cnt)
+#         if background_cnt != len(prop_labels):
+#             random.sample(range(0, ), 3)
+        # labels_cnt = len(prop_labels)-background_cnt
+        # for label in labels_gt:
+        #     if label in 
+        # background_list = 
 
-        # compute the IoU
+        self.class_sample_count = np.array([self.listCount(prop_labels, 0)])
+        for l in labels_gt:
+            self.class_sample_count = np.append(self.class_sample_count, self.listCount(prop_labels, l))
 
-        # -> crops of the classes & crops of the backgroud
-
-        # balacing by percentage
-
-        # create batches of the 1 image proposals
-        # create the tagets
-
-
-        # # define transformer
-        # self.convert_tensor = transforms.ToTensor()
+        self.target = prop_labels
+        
+         
+ 
     
     def transform_img(self, prop: list):
         prop_crop = transforms.functional.crop(self.img, prop[0],prop[1],prop[3]-prop[1],prop[2]-prop[0]) #TODO: be sure it works: top, left, height, width [xmin, ymin, xmax, ymax]
         resized = transforms.functional.resize(prop_crop,SIZE)
         return resized
 
-
+    def listCount(self, lst, x):
+        count = 0
+        for ele in lst:
+            if (ele == x):
+                count = count + 1
+        return count
 
     def crop_img(self, img, ymin, ymax, xmin, xmax):
         return img[:, ymin:ymax, xmin:xmax]
 
     def __getitem__(self, index):
-        
         
         # Own coco file
         coco = self.coco
@@ -397,10 +432,28 @@ my_annotation = {
     "path": path,
 }
 
+# ---------------------------------
 
 propset = ProposalDataset(img,my_annotation)
+
+weight = 1. / propset.class_sample_count
+
+target = propset.target
+# target = torch.from_numpy(target).long()
+
+
+samples_weight = np.array([weight[t] for t in target])
+
+samples_weight = torch.from_numpy(samples_weight)
+samples_weigth = samples_weight.double()
+sampler = WeightedRandomSampler(samples_weight, len(samples_weight))
+
+# target = torch.from_numpy(target).long()
+# train_dataset = torch.utils.data.TensorDataset(data, target)
+
+
 proploader = torch.utils.data.DataLoader(
-    propset, shuffle=False, batch_size=_batch_size,
+    propset, shuffle=False, batch_size=_batch_size, sampler=sampler,
 )
 
 iterprop = iter(proploader)
