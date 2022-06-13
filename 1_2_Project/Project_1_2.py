@@ -19,10 +19,12 @@ import time
 from omegaconf import OmegaConf
 
 from IoU import intersection_over_union as IoU
+from NMS import nms as NMS
+from mAP import mean_average_precision as mAP
 
 from taco_dataloader import TacoDataset
 from proposal_set import ProposalDataset
-from utils import collate_wrapper
+from utils import collate_wrapper, generate_targets
 from network import Network
 
 #%% Check if torch available
@@ -38,8 +40,8 @@ DIR= os.path.dirname(os.path.realpath(__file__))
 
 config = OmegaConf.load(f"{DIR}/config/config.yaml")
 
-_num_epoch = config.epoch
-_learning_rate = config.learning_rate
+EPOCHS = config.EPOCHS
+LEARNING_RATE = config.LEARNING_RATE
 
 # Optimizer Hyperparameter
 BATCH_SIZE = config.BATCH_SIZE
@@ -51,7 +53,7 @@ N_WORKERS = config.N_WORKERS
 SPLIT_DISTRIBUTION = config.SPLIT_DISTRIBUTION
 _strategy = 0
 
-SIZE = config.size
+SIZE = config.IMG_SIZE
 
 # N_WORKERS = 1
 
@@ -64,6 +66,7 @@ if use_wandb == True:
 
 #=============================================
 #%% Load Taco Data
+#=============================================
 
 dataset = TacoDataset()
 dataset_size = dataset.__len__()
@@ -134,25 +137,57 @@ valloader = torch.utils.data.DataLoader(
 #%% Load Network
 # ===============================================
 
-
 model = Network()
 model.to(device)
 if use_wandb == True:
     wandb.watch(model, log_freq=100)
 
+#%%
+def chunker(seq, size):
+    return (seq[pos:pos + size] for pos in range(0, len(seq), size))
+
+
+def get_proposals(image_path='000000.txt'):
+    for jpg in ["jpg","JPG"]:
+            if jpg in image_path:
+                prop_name = image_path.replace(jpg,"txt")
+    annotation_path = f"{DIR}/project2_ds_new/"+prop_name
+    
+    prop_anno_list = []
+    with open(annotation_path) as f:
+        proposal_list = f.readlines()
+        for box_str in proposal_list:
+            prop_box = box_str.split()
+            prop_box = [int(i) for i in prop_box]
+            prop_anno_list.append(prop_box)
+    return prop_anno_list
+
+
+def crop_and_resize(img, proposals, size):
+        # crop & resize
+        img_list = []
+        for prop in proposals:
+            prop_crop = prop_crop = transforms.functional.crop(img, prop[0],prop[1],prop[3]-prop[1],prop[2]-prop[0])
+            img_list.append(resized = transforms.functional.resize(prop_crop,(size, size)))
+        return img_list
+
+
 #%% ===================================================================
 # train
 # =====================================================================
 
-optimizer = torch.optim.Adam(model.parameters(), lr=_learning_rate)
+optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 criterion = nn.CrossEntropyLoss()
-
-num_epochs = _num_epoch #FIXME
 
 start_t = time.time()
 best_val = 100000000
 
-for epoch in tqdm(range(num_epochs), unit='epoch'):
+def unique(list1):
+    x = list1.cpu().numpy()
+    return np.unique(x)
+      
+
+for epoch in tqdm(range(EPOCHS), unit='epoch'):
     #For each epoch
     train_correct = 0
     model.train()
@@ -201,50 +236,128 @@ for epoch in tqdm(range(num_epochs), unit='epoch'):
                 predicted_class = predicted.argmax(1)
                 train_correct += (labels==predicted_class).sum().cpu().item()
 
-            if minibatch_no == 1:
-                break
-            print(test_correct)
+            break
+        break
+            # print(train_correct)
+
     # =====================================================
     # Test
     # =====================================================
-
-    # Comput the test accuracy
-    test_correct = 0
-
     with torch.no_grad():
         model.eval()
-        for imgs, annotations in testloader:
+        map_input_list = []
+        gt_list = []
+        for data in testloader:
 
-            imgs = list(img.to(device) for img in imgs)
-            annotations = [{k: v.to(device) for k, v in t.items()} for t in annotations]
-            
-            # get proposals
-            
-            # crop & resize
+            # imgs = list(img.to(device) for img in imgs)
+            # annotations = [{k: v.to(device) for k, v in t.items()} for t in annotations]
+            test_correct = []
+            for i in range(len(data)):
+                img = data[0][i]
+                my_anno = data[1][i]
+                
+                testpropset = ProposalDataset(img,my_anno,SIZE)
+                testproploader = DataLoader(
+                    testpropset, shuffle=False, batch_size=BATCH_SIZE
+                )
+                
+                output = []
+                targets = []
+                loss_test = []
+                prop_boxes = []
+                
+                
+                for prop_batch_no, (prop_img,prop_anno) in tqdm(enumerate(testproploader), total=len(testproploader)):
+                    labels = (prop_anno["labels"]).to(device)
+                    prop_box = prop_anno["boxes"]
+                    prop_boxes.append(prop_box)
+                    img_id = prop_anno["image_id"]
+                    prop_img = prop_img.to(device)
+                    batch_output = model(prop_img)
+                    # print(batch_output.shape)
+                    output.append(batch_output)
+                    targets.append(labels)
 
+                    batch_loss_test = criterion(batch_output, labels)
+                    loss_test.append(batch_loss_test)
+                gt_input = [[img_id, lab, 1, bb[0],bb[1],bb[2],bb[3]] for lab,bb in zip(my_anno["labels"],my_anno["boxes"].cpu().numpy())]
+                gt_list.append(gt_input)
+                output_stack = torch.cat(output, dim=0)
+                print(output_stack.shape)
+                predicted = output_stack.argmax(1)
 
-            for prosals_batch in cropped_proposals:
-            
-                batch_output = model(proposals_batch)
+                unique_predicted = unique(predicted)
+                bbox_uniq_list = []
+                NMS_list = []
 
-                output.append(batch_output)
-
-            singel_classes_boxes = NMS(output)
-            test_score = IoU(single_classes_boxes, GroundTruth)
-
-
-            loss_test = criterion(output, target)
-
-            predicted = output.argmax(1)
+                for uniq in unique_predicted:
+                    for idx in range(len(prop_boxes)):
+                        if uniq == predicted[idx]:
+                            # prop_boxes=prop_boxes.cpu().numpy()
+                            print(prop_boxes[idx])
+                            bbox_uniq = [uniq, output[idx],
+                            prop_boxes[idx][0],prop_boxes[idx][1], prop_boxes[idx][2],
+                            prop_boxes[idx][3]]
+                            bbox_uniq_list.append(bbox_uniq)
+                print(bbox_uniq_list[0])
+                NMS_list.append(NMS(bounding_boxes= bbox_uniq_list, 
+                                    iou_threshold=0.5, threshold=0.2))
+            train_acc = train_correct/len(data)
+            test_acc = test_correct/len(data)
+            map_input = [[img_id, ii[0],ii[1],ii[2],ii[3],ii[4],ii[5]] for ii in NMS_list]
+            map_input_list.append(map_input)
             
             test_correct += (target==predicted).sum().item()
-        train_acc = train_correct/len(trainset)
-        test_acc = test_correct/len(testset)
+
+        mAP = mAP(map_input_list, gt_input)
+        print(mAP)
+        
+
+        
+    
+    
+    
+    # # =====================================================
+    # # Test
+    # # =====================================================
+
+    # # Comput the test accuracy
+    # test_correct = 0
+
+    # with torch.no_grad():
+    #     model.eval()
+    #     for imgs, annotations in testloader:
+
+    #         imgs = list(img.to(device) for img in imgs)
+    #         annotations = [{k: v.to(device) for k, v in t.items()} for t in annotations]
+            
+    #         # get proposals
+            
+    #         # crop & resize
+
+
+    #         for prosals_batch in cropped_proposals:
+            
+    #             batch_output = model(proposals_batch)
+
+    #             output.append(batch_output)
+
+    #         singel_classes_boxes = NMS(output)
+    #         test_score = IoU(single_classes_boxes, GroundTruth)
+
+
+    #         loss_test = criterion(output, target)
+
+    #         predicted = output.argmax(1)
+            
+    #         test_correct += (target==predicted).sum().item()
+    #     train_acc = train_correct/len(trainset)
+    #     test_acc = test_correct/len(testset)
         
         
         
     print("\n \n Epoch: {epoch}/{total} \n Accuracy train: {train:.1f}%\t test: {test:.1f}% \n Loss: \t train: {loss_train:.3f} \t test: {loss_test:.3f}\n".format(
-                                                        epoch=epoch, total=_num_epoch,
+                                                        epoch=epoch, total=EPOCHS,
                                                         test=100*test_acc, train=100*train_acc,                                               loss_train=loss_train, loss_test=loss_test))
     
     if use_wandb==True:
