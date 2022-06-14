@@ -25,6 +25,8 @@ v2 = np.load(V2)['w']
 
 
 # print(torch.tensor(v1))
+v1 = torch.tensor(v1)
+v2 = torch.tensor(v2)
 
 img = G(v1, c)
 img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
