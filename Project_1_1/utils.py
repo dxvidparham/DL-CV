@@ -28,8 +28,5 @@ class EarlyStopping:
                 self.early_stop = True
 
 
-
-
-
 if __name__ == "__main__":
     pass

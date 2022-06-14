@@ -29,8 +29,10 @@ from dataLoader import Hotdog_NotHotdog as Dataset_fetcher
 from utils import EarlyStopping
 
 # set flags / seeds
+torch.backends.cudnn.benchmark = True
 np.random.seed(1)
 torch.manual_seed(1)
+torch.cuda.manual_seed(1)
 
 # Load config file
 BASE_DIR = os.getcwd()

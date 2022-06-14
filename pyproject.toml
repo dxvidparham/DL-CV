@@ -13,6 +13,8 @@ wandb = "^0.12.17"
 albumentations = "^1.1.0"
 tqdm = "^4.64.0"
 pycocotools = "^2.0.4"
+notebook = "^6.4.12"
+seaborn = "^0.11.2"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"
