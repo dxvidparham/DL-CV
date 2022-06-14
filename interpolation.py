@@ -25,9 +25,13 @@ v2 = np.load(V2)['w']
 
 
 # print(torch.tensor(v1))
-v1 = torch.tensor(v1)
-v2 = torch.tensor(v2)
-
-img = G(v1, c)
-img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-img_1 = PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/{img_name}.png')
+v1 = torch.tensor(v1).cuda()
+v2 = torch.tensor(v2).cuda()
+for idx, w in enumerate(v1):
+    img = G.synthesis(w.unsqueeze(0), noise_mode="const")
+    img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+    img = PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/Alex_projection{idx:02d}.png')
+for idx, w in enumerate(v2):
+    img = G.synthesis(w.unsqueeze(0), noise_mode="const")
+    img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+    img = PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/Chris_projection{idx:02d}.png')
