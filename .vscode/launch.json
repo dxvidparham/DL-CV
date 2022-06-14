@@ -9,17 +9,17 @@
             "type": "python",
             "request": "attach",
             "connect": {
-                "host": "n-62-11-15",
+                "host": "n-62-11-13",
                 "port": 5678
             }
         },
-        // {
-        //     "name": "Python: Current File",
-        //     "type": "python",
-        //     "request": "launch",
-        //     "program": "${file}",
-        //     "console": "integratedTerminal",
-        //     "justMyCode": true
-        // }
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
     ]
 }
