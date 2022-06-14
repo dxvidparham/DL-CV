@@ -17,13 +17,17 @@ with open('model/ffhq.pkl', 'rb') as f:
     G = pickle.load(f)['G_ema'].cuda()  # torch.nn.Module
 z = torch.randn([1, G.z_dim]).cuda()    # latent pytcodes
 c = None                                # class labels (not used in this example)
-img = G(z, c)                           # NCHW, float32, dynamic range [-1, +1]
+# img = G(z, c)                           # NCHW, float32, dynamic range [-1, +1]
 
 
 v1 = np.load(V1)['w']
 v2 = np.load(V2)['w']
 
+# print(torch.tensor(v1))
+v1 = torch.tensor(v1).cuda()
+v2 = torch.tensor(v2).cuda()
 
+assert v1.shape[1:] == (G.num_ws, G.w_dim)
 
 # print(torch.tensor(v1))
 v1 = torch.tensor(v1).cuda()
