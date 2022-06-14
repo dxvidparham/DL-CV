@@ -1,4 +1,4 @@
-# Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
 #
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -6,13 +6,17 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
-ARG BASE_IMAGE=nvcr.io/nvidia/tensorflow:20.10-tf1-py3
-FROM $BASE_IMAGE
+FROM nvcr.io/nvidia/pytorch:20.12-py3
 
-RUN pip install scipy==1.3.3
-RUN pip install requests==2.22.0
-RUN pip install Pillow==6.2.1
-RUN pip install h5py==2.9.0
-RUN pip install imageio==2.9.0
-RUN pip install imageio-ffmpeg==0.4.2
-RUN pip install tqdm==4.49.0
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+RUN pip install imageio-ffmpeg==0.4.3 pyspng==0.1.0
+
+WORKDIR /workspace
+
+# Unset TORCH_CUDA_ARCH_LIST and exec.  This makes pytorch run-time
+# extension builds significantly faster as we only compile for the
+# currently active GPU configuration.
+RUN (printf '#!/bin/bash\nunset TORCH_CUDA_ARCH_LIST\nexec \"$@\"\n' >> /entry.sh) && chmod a+x /entry.sh
+ENTRYPOINT ["/entry.sh"]

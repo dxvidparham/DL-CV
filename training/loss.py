@@ -1,4 +1,4 @@
-﻿# Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+﻿# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
 #
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -6,302 +6,128 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
-"""Loss functions."""
-
 import numpy as np
-import tensorflow as tf
-import dnnlib
-import dnnlib.tflib as tflib
-from dnnlib.tflib.autosummary import autosummary
+import torch
+from torch_utils import training_stats
+from torch_utils import misc
+from torch_utils.ops import conv2d_gradfix
 
 #----------------------------------------------------------------------------
-# Report statistic for all interested parties (AdaptiveAugment and tfevents).
 
-def report_stat(aug, name, value):
-    if aug is not None:
-        value = aug.report_stat(name, value)
-    value = autosummary(name, value)
-    return value
+class Loss:
+    def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain): # to be overridden by subclass
+        raise NotImplementedError()
 
 #----------------------------------------------------------------------------
-# Report loss terms and collect them into EasyDict.
 
-def report_loss(aug, G_loss, D_loss, G_reg=None, D_reg=None):
-    assert G_loss is not None and D_loss is not None
-    terms = dnnlib.EasyDict(G_reg=None, D_reg=None)
-    terms.G_loss = report_stat(aug, 'Loss/G/loss', G_loss)
-    terms.D_loss = report_stat(aug, 'Loss/D/loss', D_loss)
-    if G_reg is not None: terms.G_reg = report_stat(aug, 'Loss/G/reg', G_reg)
-    if D_reg is not None: terms.D_reg = report_stat(aug, 'Loss/D/reg', D_reg)
-    return terms
+class StyleGAN2Loss(Loss):
+    def __init__(self, device, G_mapping, G_synthesis, D, augment_pipe=None, style_mixing_prob=0.9, r1_gamma=10, pl_batch_shrink=2, pl_decay=0.01, pl_weight=2):
+        super().__init__()
+        self.device = device
+        self.G_mapping = G_mapping
+        self.G_synthesis = G_synthesis
+        self.D = D
+        self.augment_pipe = augment_pipe
+        self.style_mixing_prob = style_mixing_prob
+        self.r1_gamma = r1_gamma
+        self.pl_batch_shrink = pl_batch_shrink
+        self.pl_decay = pl_decay
+        self.pl_weight = pl_weight
+        self.pl_mean = torch.zeros([], device=device)
 
-#----------------------------------------------------------------------------
-# Evaluate G and return results as EasyDict.
+    def run_G(self, z, c, sync):
+        with misc.ddp_sync(self.G_mapping, sync):
+            ws = self.G_mapping(z, c)
+            if self.style_mixing_prob > 0:
+                with torch.autograd.profiler.record_function('style_mixing'):
+                    cutoff = torch.empty([], dtype=torch.int64, device=ws.device).random_(1, ws.shape[1])
+                    cutoff = torch.where(torch.rand([], device=ws.device) < self.style_mixing_prob, cutoff, torch.full_like(cutoff, ws.shape[1]))
+                    ws[:, cutoff:] = self.G_mapping(torch.randn_like(z), c, skip_w_avg_update=True)[:, cutoff:]
+        with misc.ddp_sync(self.G_synthesis, sync):
+            img = self.G_synthesis(ws)
+        return img, ws
 
-def eval_G(G, latents, labels, return_dlatents=False):
-    r = dnnlib.EasyDict()
-    r.args = dnnlib.EasyDict()
-    r.args.is_training = True
-    if return_dlatents:
-        r.args.return_dlatents = True
-    r.images = G.get_output_for(latents, labels, **r.args)
+    def run_D(self, img, c, sync):
+        if self.augment_pipe is not None:
+            img = self.augment_pipe(img)
+        with misc.ddp_sync(self.D, sync):
+            logits = self.D(img, c)
+        return logits
 
-    r.dlatents = None
-    if return_dlatents:
-        r.images, r.dlatents = r.images
-    return r
+    def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
+        assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth']
+        do_Gmain = (phase in ['Gmain', 'Gboth'])
+        do_Dmain = (phase in ['Dmain', 'Dboth'])
+        do_Gpl   = (phase in ['Greg', 'Gboth']) and (self.pl_weight != 0)
+        do_Dr1   = (phase in ['Dreg', 'Dboth']) and (self.r1_gamma != 0)
 
-#----------------------------------------------------------------------------
-# Evaluate D and return results as EasyDict.
+        # Gmain: Maximize logits for generated images.
+        if do_Gmain:
+            with torch.autograd.profiler.record_function('Gmain_forward'):
+                gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=(sync and not do_Gpl)) # May get synced by Gpl.
+                gen_logits = self.run_D(gen_img, gen_c, sync=False)
+                training_stats.report('Loss/scores/fake', gen_logits)
+                training_stats.report('Loss/signs/fake', gen_logits.sign())
+                loss_Gmain = torch.nn.functional.softplus(-gen_logits) # -log(sigmoid(gen_logits))
+                training_stats.report('Loss/G/loss', loss_Gmain)
+            with torch.autograd.profiler.record_function('Gmain_backward'):
+                loss_Gmain.mean().mul(gain).backward()
 
-def eval_D(D, aug, images, labels, report=None, augment_inputs=True, return_aux=0):
-    r = dnnlib.EasyDict()
-    r.images_aug = images
-    r.labels_aug = labels
-    if augment_inputs and aug is not None:
-        r.images_aug, r.labels_aug = aug.apply(r.images_aug, r.labels_aug)
+        # Gpl: Apply path length regularization.
+        if do_Gpl:
+            with torch.autograd.profiler.record_function('Gpl_forward'):
+                batch_size = gen_z.shape[0] // self.pl_batch_shrink
+                gen_img, gen_ws = self.run_G(gen_z[:batch_size], gen_c[:batch_size], sync=sync)
+                pl_noise = torch.randn_like(gen_img) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
+                with torch.autograd.profiler.record_function('pl_grads'), conv2d_gradfix.no_weight_gradients():
+                    pl_grads = torch.autograd.grad(outputs=[(gen_img * pl_noise).sum()], inputs=[gen_ws], create_graph=True, only_inputs=True)[0]
+                pl_lengths = pl_grads.square().sum(2).mean(1).sqrt()
+                pl_mean = self.pl_mean.lerp(pl_lengths.mean(), self.pl_decay)
+                self.pl_mean.copy_(pl_mean.detach())
+                pl_penalty = (pl_lengths - pl_mean).square()
+                training_stats.report('Loss/pl_penalty', pl_penalty)
+                loss_Gpl = pl_penalty * self.pl_weight
+                training_stats.report('Loss/G/reg', loss_Gpl)
+            with torch.autograd.profiler.record_function('Gpl_backward'):
+                (gen_img[:, 0, 0, 0] * 0 + loss_Gpl).mean().mul(gain).backward()
 
-    r.args = dnnlib.EasyDict()
-    r.args.is_training = True
-    if aug is not None:
-        r.args.augment_strength = aug.get_strength_var()
-    if return_aux > 0:
-        r.args.score_size = return_aux + 1
-    r.scores = D.get_output_for(r.images_aug, r.labels_aug, **r.args)
+        # Dmain: Minimize logits for generated images.
+        loss_Dgen = 0
+        if do_Dmain:
+            with torch.autograd.profiler.record_function('Dgen_forward'):
+                gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=False)
+                gen_logits = self.run_D(gen_img, gen_c, sync=False) # Gets synced by loss_Dreal.
+                training_stats.report('Loss/scores/fake', gen_logits)
+                training_stats.report('Loss/signs/fake', gen_logits.sign())
+                loss_Dgen = torch.nn.functional.softplus(gen_logits) # -log(1 - sigmoid(gen_logits))
+            with torch.autograd.profiler.record_function('Dgen_backward'):
+                loss_Dgen.mean().mul(gain).backward()
 
-    r.aux = None
-    if return_aux:
-        r.aux = r.scores[:, 1:]
-        r.scores = r.scores[:, :1]
+        # Dmain: Maximize logits for real images.
+        # Dr1: Apply R1 regularization.
+        if do_Dmain or do_Dr1:
+            name = 'Dreal_Dr1' if do_Dmain and do_Dr1 else 'Dreal' if do_Dmain else 'Dr1'
+            with torch.autograd.profiler.record_function(name + '_forward'):
+                real_img_tmp = real_img.detach().requires_grad_(do_Dr1)
+                real_logits = self.run_D(real_img_tmp, real_c, sync=sync)
+                training_stats.report('Loss/scores/real', real_logits)
+                training_stats.report('Loss/signs/real', real_logits.sign())
 
-    if report is not None:
-        report_ops = [
-            report_stat(aug, 'Loss/scores/' + report, r.scores),
-            report_stat(aug, 'Loss/signs/' + report, tf.sign(r.scores)),
-            report_stat(aug, 'Loss/squares/' + report, tf.square(r.scores)),
-        ]
-        with tf.control_dependencies(report_ops):
-            r.scores = tf.identity(r.scores)
-    return r
+                loss_Dreal = 0
+                if do_Dmain:
+                    loss_Dreal = torch.nn.functional.softplus(-real_logits) # -log(sigmoid(real_logits))
+                    training_stats.report('Loss/D/loss', loss_Dgen + loss_Dreal)
 
-#----------------------------------------------------------------------------
-# Non-saturating logistic loss with R1 and path length regularizers, used
-# in the paper "Analyzing and Improving the Image Quality of StyleGAN".
+                loss_Dr1 = 0
+                if do_Dr1:
+                    with torch.autograd.profiler.record_function('r1_grads'), conv2d_gradfix.no_weight_gradients():
+                        r1_grads = torch.autograd.grad(outputs=[real_logits.sum()], inputs=[real_img_tmp], create_graph=True, only_inputs=True)[0]
+                    r1_penalty = r1_grads.square().sum([1,2,3])
+                    loss_Dr1 = r1_penalty * (self.r1_gamma / 2)
+                    training_stats.report('Loss/r1_penalty', r1_penalty)
+                    training_stats.report('Loss/D/reg', loss_Dr1)
 
-def stylegan2(G, D, aug, fake_labels, real_images, real_labels, r1_gamma=10, pl_minibatch_shrink=2, pl_decay=0.01, pl_weight=2, **_kwargs):
-    # Evaluate networks for the main loss.
-    minibatch_size = tf.shape(fake_labels)[0]
-    fake_latents = tf.random_normal([minibatch_size] + G.input_shapes[0][1:])
-    G_fake = eval_G(G, fake_latents, fake_labels, return_dlatents=True)
-    D_fake = eval_D(D, aug, G_fake.images, fake_labels, report='fake')
-    D_real = eval_D(D, aug, real_images, real_labels, report='real')
-
-    # Non-saturating logistic loss from "Generative Adversarial Nets".
-    with tf.name_scope('Loss_main'):
-        G_loss = tf.nn.softplus(-D_fake.scores) # -log(sigmoid(D_fake.scores)), pylint: disable=invalid-unary-operand-type
-        D_loss = tf.nn.softplus(D_fake.scores) # -log(1 - sigmoid(D_fake.scores))
-        D_loss += tf.nn.softplus(-D_real.scores) # -log(sigmoid(D_real.scores)), pylint: disable=invalid-unary-operand-type
-        G_reg = 0
-        D_reg = 0
-
-    # R1 regularizer from "Which Training Methods for GANs do actually Converge?".
-    if r1_gamma != 0:
-        with tf.name_scope('Loss_R1'):
-            r1_grads = tf.gradients(tf.reduce_sum(D_real.scores), [real_images])[0]
-            r1_penalty = tf.reduce_sum(tf.square(r1_grads), axis=[1,2,3])
-            r1_penalty = report_stat(aug, 'Loss/r1_penalty', r1_penalty)
-            D_reg += r1_penalty * (r1_gamma * 0.5)
-
-    # Path length regularizer from "Analyzing and Improving the Image Quality of StyleGAN".
-    if pl_weight != 0:
-        with tf.name_scope('Loss_PL'):
-
-            # Evaluate the regularization term using a smaller minibatch to conserve memory.
-            G_pl = G_fake
-            if pl_minibatch_shrink > 1:
-                pl_minibatch_size = minibatch_size // pl_minibatch_shrink
-                pl_latents = fake_latents[:pl_minibatch_size]
-                pl_labels = fake_labels[:pl_minibatch_size]
-                G_pl = eval_G(G, pl_latents, pl_labels, return_dlatents=True)
-
-            # Compute |J*y|.
-            pl_noise = tf.random_normal(tf.shape(G_pl.images)) / np.sqrt(np.prod(G.output_shape[2:]))
-            pl_grads = tf.gradients(tf.reduce_sum(G_pl.images * pl_noise), [G_pl.dlatents])[0]
-            pl_lengths = tf.sqrt(tf.reduce_mean(tf.reduce_sum(tf.square(pl_grads), axis=2), axis=1))
-
-            # Track exponential moving average of |J*y|.
-            with tf.control_dependencies(None):
-                pl_mean_var = tf.Variable(name='pl_mean', trainable=False, initial_value=0, dtype=tf.float32)
-            pl_mean = pl_mean_var + pl_decay * (tf.reduce_mean(pl_lengths) - pl_mean_var)
-            pl_update = tf.assign(pl_mean_var, pl_mean)
-
-            # Calculate (|J*y|-a)^2.
-            with tf.control_dependencies([pl_update]):
-                pl_penalty = tf.square(pl_lengths - pl_mean)
-                pl_penalty = report_stat(aug, 'Loss/pl_penalty', pl_penalty)
-
-            # Apply weight.
-            #
-            # Note: The division in pl_noise decreases the weight by num_pixels, and the reduce_mean
-            # in pl_lengths decreases it by num_affine_layers. The effective weight then becomes:
-            #
-            # gamma_pl = pl_weight / num_pixels / num_affine_layers
-            # = 2 / (r^2) / (log2(r) * 2 - 2)
-            # = 1 / (r^2 * (log2(r) - 1))
-            # = ln(2) / (r^2 * (ln(r) - ln(2))
-            #
-            G_reg += tf.tile(pl_penalty, [pl_minibatch_shrink]) * pl_weight
-
-    return report_loss(aug, G_loss, D_loss, G_reg, D_reg)
-
-#----------------------------------------------------------------------------
-# Hybrid loss used for comparison methods used in the paper
-# "Training Generative Adversarial Networks with Limited Data".
-
-def cmethods(G, D, aug, fake_labels, real_images, real_labels,
-    r1_gamma=10, r2_gamma=0,
-    pl_minibatch_shrink=2, pl_decay=0.01, pl_weight=2,
-    bcr_real_weight=0, bcr_fake_weight=0, bcr_augment=None,
-    zcr_gen_weight=0, zcr_dis_weight=0, zcr_noise_std=0.1,
-    auxrot_alpha=0, auxrot_beta=0,
-    **_kwargs,
-):
-    # Evaluate networks for the main loss.
-    minibatch_size = tf.shape(fake_labels)[0]
-    fake_latents = tf.random_normal([minibatch_size] + G.input_shapes[0][1:])
-    G_fake = eval_G(G, fake_latents, fake_labels)
-    D_fake = eval_D(D, aug, G_fake.images, fake_labels, report='fake')
-    D_real = eval_D(D, aug, real_images, real_labels, report='real')
-
-    # Non-saturating logistic loss from "Generative Adversarial Nets".
-    with tf.name_scope('Loss_main'):
-        G_loss = tf.nn.softplus(-D_fake.scores) # -log(sigmoid(D_fake.scores)), pylint: disable=invalid-unary-operand-type
-        D_loss = tf.nn.softplus(D_fake.scores) # -log(1 - sigmoid(D_fake.scores))
-        D_loss += tf.nn.softplus(-D_real.scores) # -log(sigmoid(D_real.scores)), pylint: disable=invalid-unary-operand-type
-        G_reg = 0
-        D_reg = 0
-
-    # R1 and R2 regularizers from "Which Training Methods for GANs do actually Converge?".
-    if r1_gamma != 0 or r2_gamma != 0:
-        with tf.name_scope('Loss_R1R2'):
-            if r1_gamma != 0:
-                r1_grads = tf.gradients(tf.reduce_sum(D_real.scores), [real_images])[0]
-                r1_penalty = tf.reduce_sum(tf.square(r1_grads), axis=[1,2,3])
-                r1_penalty = report_stat(aug, 'Loss/r1_penalty', r1_penalty)
-                D_reg += r1_penalty * (r1_gamma * 0.5)
-            if r2_gamma != 0:
-                r2_grads = tf.gradients(tf.reduce_sum(D_fake.scores), [G_fake.images])[0]
-                r2_penalty = tf.reduce_sum(tf.square(r2_grads), axis=[1,2,3])
-                r2_penalty = report_stat(aug, 'Loss/r2_penalty', r2_penalty)
-                D_reg += r2_penalty * (r2_gamma * 0.5)
-
-    # Path length regularizer from "Analyzing and Improving the Image Quality of StyleGAN".
-    if pl_weight != 0:
-        with tf.name_scope('Loss_PL'):
-            pl_minibatch_size = minibatch_size // pl_minibatch_shrink
-            pl_latents = fake_latents[:pl_minibatch_size]
-            pl_labels = fake_labels[:pl_minibatch_size]
-            G_pl = eval_G(G, pl_latents, pl_labels, return_dlatents=True)
-            pl_noise = tf.random_normal(tf.shape(G_pl.images)) / np.sqrt(np.prod(G.output_shape[2:]))
-            pl_grads = tf.gradients(tf.reduce_sum(G_pl.images * pl_noise), [G_pl.dlatents])[0]
-            pl_lengths = tf.sqrt(tf.reduce_mean(tf.reduce_sum(tf.square(pl_grads), axis=2), axis=1))
-            with tf.control_dependencies(None):
-                pl_mean_var = tf.Variable(name='pl_mean', trainable=False, initial_value=0, dtype=tf.float32)
-            pl_mean = pl_mean_var + pl_decay * (tf.reduce_mean(pl_lengths) - pl_mean_var)
-            pl_update = tf.assign(pl_mean_var, pl_mean)
-            with tf.control_dependencies([pl_update]):
-                pl_penalty = tf.square(pl_lengths - pl_mean)
-                pl_penalty = report_stat(aug, 'Loss/pl_penalty', pl_penalty)
-            G_reg += tf.tile(pl_penalty, [pl_minibatch_shrink]) * pl_weight
-
-    # bCR regularizer from "Improved consistency regularization for GANs".
-    if (bcr_real_weight != 0 or bcr_fake_weight != 0) and bcr_augment is not None:
-        with tf.name_scope('Loss_bCR'):
-            if bcr_real_weight != 0:
-                bcr_real_images, bcr_real_labels = dnnlib.util.call_func_by_name(D_real.images_aug, D_real.labels_aug, **bcr_augment)
-                D_bcr_real = eval_D(D, aug, bcr_real_images, bcr_real_labels, report='real_bcr', augment_inputs=False)
-                bcr_real_penalty = tf.square(D_bcr_real.scores - D_real.scores)
-                bcr_real_penalty = report_stat(aug, 'Loss/bcr_penalty/real', bcr_real_penalty)
-                D_loss += bcr_real_penalty * bcr_real_weight # NOTE: Must not use lazy regularization for this term.
-            if bcr_fake_weight != 0:
-                bcr_fake_images, bcr_fake_labels = dnnlib.util.call_func_by_name(D_fake.images_aug, D_fake.labels_aug, **bcr_augment)
-                D_bcr_fake = eval_D(D, aug, bcr_fake_images, bcr_fake_labels, report='fake_bcr', augment_inputs=False)
-                bcr_fake_penalty = tf.square(D_bcr_fake.scores - D_fake.scores)
-                bcr_fake_penalty = report_stat(aug, 'Loss/bcr_penalty/fake', bcr_fake_penalty)
-                D_loss += bcr_fake_penalty * bcr_fake_weight # NOTE: Must not use lazy regularization for this term.
-
-    # zCR regularizer from "Improved consistency regularization for GANs".
-    if zcr_gen_weight != 0 or zcr_dis_weight != 0:
-        with tf.name_scope('Loss_zCR'):
-            zcr_fake_latents = fake_latents + tf.random_normal([minibatch_size] + G.input_shapes[0][1:]) * zcr_noise_std
-            G_zcr = eval_G(G, zcr_fake_latents, fake_labels)
-            if zcr_gen_weight > 0:
-                zcr_gen_penalty = -tf.reduce_mean(tf.square(G_fake.images - G_zcr.images), axis=[1,2,3])
-                zcr_gen_penalty = report_stat(aug, 'Loss/zcr_gen_penalty', zcr_gen_penalty)
-                G_loss += zcr_gen_penalty * zcr_gen_weight
-            if zcr_dis_weight > 0:
-                D_zcr = eval_D(D, aug, G_zcr.images, fake_labels, report='fake_zcr', augment_inputs=False)
-                zcr_dis_penalty = tf.square(D_fake.scores - D_zcr.scores)
-                zcr_dis_penalty = report_stat(aug, 'Loss/zcr_dis_penalty', zcr_dis_penalty)
-                D_loss += zcr_dis_penalty * zcr_dis_weight
-
-    # Auxiliary rotation loss from "Self-supervised GANs via auxiliary rotation loss".
-    if auxrot_alpha != 0 or auxrot_beta != 0:
-        with tf.name_scope('Loss_AuxRot'):
-            idx = tf.range(minibatch_size * 4, dtype=tf.int32) // minibatch_size
-            b0 = tf.logical_or(tf.equal(idx, 0), tf.equal(idx, 1))
-            b1 = tf.logical_or(tf.equal(idx, 0), tf.equal(idx, 3))
-            b2 = tf.logical_or(tf.equal(idx, 0), tf.equal(idx, 2))
-            if auxrot_alpha != 0:
-                auxrot_fake = tf.tile(G_fake.images, [4, 1, 1, 1])
-                auxrot_fake = tf.where(b0, auxrot_fake, tf.reverse(auxrot_fake, [2]))
-                auxrot_fake = tf.where(b1, auxrot_fake, tf.reverse(auxrot_fake, [3]))
-                auxrot_fake = tf.where(b2, auxrot_fake, tf.transpose(auxrot_fake, [0, 1, 3, 2]))
-                D_auxrot_fake = eval_D(D, aug, auxrot_fake, fake_labels, return_aux=4)
-                G_loss += tf.nn.sparse_softmax_cross_entropy_with_logits(labels=idx, logits=D_auxrot_fake.aux) * auxrot_alpha
-            if auxrot_beta != 0:
-                auxrot_real = tf.tile(real_images, [4, 1, 1, 1])
-                auxrot_real = tf.where(b0, auxrot_real, tf.reverse(auxrot_real, [2]))
-                auxrot_real = tf.where(b1, auxrot_real, tf.reverse(auxrot_real, [3]))
-                auxrot_real = tf.where(b2, auxrot_real, tf.transpose(auxrot_real, [0, 1, 3, 2]))
-                D_auxrot_real = eval_D(D, aug, auxrot_real, real_labels, return_aux=4)
-                D_loss += tf.nn.sparse_softmax_cross_entropy_with_logits(labels=idx, logits=D_auxrot_real.aux) * auxrot_beta
-
-    return report_loss(aug, G_loss, D_loss, G_reg, D_reg)
-
-#----------------------------------------------------------------------------
-# WGAN-GP loss with epsilon penalty, used in the paper
-# "Progressive Growing of GANs for Improved Quality, Stability, and Variation".
-
-def wgangp(G, D, aug, fake_labels, real_images, real_labels, wgan_epsilon=0.001, wgan_lambda=10, wgan_target=1, **_kwargs):
-    minibatch_size = tf.shape(fake_labels)[0]
-    fake_latents = tf.random_normal([minibatch_size] + G.input_shapes[0][1:])
-    G_fake = eval_G(G, fake_latents, fake_labels)
-    D_fake = eval_D(D, aug, G_fake.images, fake_labels, report='fake')
-    D_real = eval_D(D, aug, real_images, real_labels, report='real')
-
-    # WGAN loss from "Wasserstein Generative Adversarial Networks".
-    with tf.name_scope('Loss_main'):
-        G_loss = -D_fake.scores # pylint: disable=invalid-unary-operand-type
-        D_loss = D_fake.scores - D_real.scores
-
-    # Epsilon penalty from "Progressive Growing of GANs for Improved Quality, Stability, and Variation"
-    with tf.name_scope('Loss_epsilon'):
-        epsilon_penalty = report_stat(aug, 'Loss/epsilon_penalty', tf.square(D_real.scores))
-        D_loss += epsilon_penalty * wgan_epsilon
-
-    # Gradient penalty from "Improved Training of Wasserstein GANs".
-    with tf.name_scope('Loss_GP'):
-        mix_factors = tf.random_uniform([minibatch_size, 1, 1, 1], 0, 1, dtype=G_fake.images.dtype)
-        mix_images = tflib.lerp(tf.cast(real_images, G_fake.images.dtype), G_fake.images, mix_factors)
-        mix_labels = real_labels # NOTE: Mixing is performed without respect to fake_labels.
-        D_mix = eval_D(D, aug, mix_images, mix_labels, report='mix')
-        mix_grads = tf.gradients(tf.reduce_sum(D_mix.scores), [mix_images])[0]
-        mix_norms = tf.sqrt(tf.reduce_sum(tf.square(mix_grads), axis=[1,2,3]))
-        mix_norms = report_stat(aug, 'Loss/mix_norms', mix_norms)
-        gradient_penalty = tf.square(mix_norms - wgan_target)
-        D_reg = gradient_penalty * (wgan_lambda / (wgan_target**2))
-
-    return report_loss(aug, G_loss, D_loss, None, D_reg)
+            with torch.autograd.profiler.record_function(name + '_backward'):
+                (real_logits * 0 + loss_Dreal + loss_Dr1).mean().mul(gain).backward()
 
 #----------------------------------------------------------------------------

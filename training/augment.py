@@ -1,4 +1,4 @@
-﻿# Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+﻿# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
 #
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -6,232 +6,14 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
-"""Adaptive discriminator augmentation (ADA) from the paper
-"Training Generative Adversarial Networks with Limited Data"."""
-
 import numpy as np
-import tensorflow as tf
 import scipy.signal
-import dnnlib
-import dnnlib.tflib as tflib
-
-from training import loss
-
-#----------------------------------------------------------------------------
-# Main class for adaptive discriminator augmentation (ADA).
-# - Performs adaptive tuning of augmentation strength during training.
-# - Acts as a wrapper for the augmentation pipeline.
-# - Keeps track of the necessary training statistics.
-# - Calculates statistics for the validation set, if available.
-
-class AdaptiveAugment:
-    def __init__(self,
-        apply_func       = None,    # Function representing the augmentation pipeline. Can be a fully-qualified name, a function object, or None.
-        apply_args       = {},      # Keyword arguments for the augmentation pipeline.
-        initial_strength = 0,       # Augmentation strength (p) to use initially.
-        tune_heuristic   = None,    # Heuristic for tuning the augmentation strength dynamically: 'rt', 'rv', None.
-        tune_target      = None,    # Target value for the selected heuristic.
-        tune_kimg        = 500,     # Adjustment speed, measured in how many kimg it takes for the strength to increase/decrease by one unit.
-        stat_decay_kimg  = 0,       # Exponential moving average to use for training statistics, measured as the half-life in kimg. 0 = disable EMA.
-    ):
-        tune_stats = {
-            'rt': {'Loss/signs/real'},
-            'rv': {'Loss/scores/fake', 'Loss/scores/real', 'Loss/scores/valid'},
-            None: {},
-        }
-        assert tune_heuristic in tune_stats
-        assert apply_func is None or isinstance(apply_func, str) or dnnlib.util.is_top_level_function(apply_func)
-
-        # Configuration.
-        self.apply_func       = dnnlib.util.get_obj_by_name(apply_func) if isinstance(apply_func, str) else apply_func
-        self.apply_args       = apply_args
-        self.strength         = initial_strength
-        self.tune_heuristic   = tune_heuristic
-        self.tune_target      = tune_target
-        self.tune_kimg        = tune_kimg
-        self.stat_decay_kimg  = stat_decay_kimg
-
-        # Runtime state.
-        self._tune_stats      = tune_stats[tune_heuristic]
-        self._strength_var    = None
-        self._acc_vars        = dict() # {name: [var, ...], ...}
-        self._acc_decay_in    = None
-        self._acc_decay_ops   = dict() # {name: op, ...}
-        self._valid_images    = None
-        self._valid_labels    = None
-        self._valid_images_in = None
-        self._valid_labels_in = None
-        self._valid_op        = None
-        self._valid_ofs       = 0
-
-    def init_validation_set(self, D_gpus, training_set):
-        assert self._valid_images is None
-        images, labels = training_set.load_validation_set_np()
-        if images.shape[0] == 0:
-            return
-        self._valid_images = images
-        self._valid_labels = labels
-
-        # Build validation graph.
-        with tflib.absolute_name_scope('Validation'), tf.control_dependencies(None):
-            with tf.device('/cpu:0'):
-                self._valid_images_in = tf.placeholder(training_set.dtype, name='valid_images_in', shape=[None]+training_set.shape)
-                self._valid_labels_in = tf.placeholder(training_set.label_dtype, name='valid_labels_in', shape=[None,training_set.label_size])
-                images_in_gpus = tf.split(self._valid_images_in, len(D_gpus))
-                labels_in_gpus = tf.split(self._valid_labels_in, len(D_gpus))
-            ops = []
-            for gpu, (D_gpu, images_in_gpu, labels_in_gpu) in enumerate(zip(D_gpus, images_in_gpus, labels_in_gpus)):
-                with tf.device(f'/gpu:{gpu}'):
-                    images_expr = tf.cast(images_in_gpu, tf.float32) * (2 / 255) - 1
-                    D_valid = loss.eval_D(D_gpu, self, images_expr, labels_in_gpu, report='valid')
-                    ops += [D_valid.scores]
-                self._valid_op = tf.group(*ops)
-
-    def apply(self, images, labels, enable=True):
-        if not enable or self.apply_func is None or (self.strength == 0 and self.tune_heuristic is None):
-            return images, labels
-        with tf.name_scope('Augment'):
-            images, labels = self.apply_func(images, labels, strength=self.get_strength_var(), **self.apply_args)
-        return images, labels
-
-    def get_strength_var(self):
-        if self._strength_var is None:
-            with tflib.absolute_name_scope('Augment'), tf.control_dependencies(None):
-                self._strength_var = tf.Variable(np.float32(self.strength), name='strength', trainable=False)
-        return self._strength_var
-
-    def report_stat(self, name, expr):
-        if name in self._tune_stats:
-            expr = self._increment_acc(name, expr)
-        return expr
-
-    def tune(self, nimg_delta):
-        acc = {name: self._read_and_decay_acc(name, nimg_delta) for name in self._tune_stats}
-        nimg_ratio = nimg_delta / (self.tune_kimg * 1000)
-        strength = self.strength
-
-        if self.tune_heuristic == 'rt':
-            assert self.tune_target is not None
-            rt = acc['Loss/signs/real']
-            strength += nimg_ratio * np.sign(rt - self.tune_target)
-
-        if self.tune_heuristic == 'rv':
-            assert self.tune_target is not None
-            assert self._valid_images is not None
-            rv = (acc['Loss/scores/real'] - acc['Loss/scores/valid']) / max(acc['Loss/scores/real'] - acc['Loss/scores/fake'], 1e-8)
-            strength += nimg_ratio * np.sign(rv - self.tune_target)
-
-        self._set_strength(strength)
-
-    def run_validation(self, minibatch_size):
-        if self._valid_images is not None:
-            indices = [(self._valid_ofs + i) % self._valid_images.shape[0] for i in range(minibatch_size)]
-            tflib.run(self._valid_op, {self._valid_images_in: self._valid_images[indices], self._valid_labels_in: self._valid_labels[indices]})
-            self._valid_ofs += len(indices)
-
-    def _set_strength(self, strength):
-        strength = max(strength, 0)
-        if self._strength_var is not None and strength != self.strength:
-            tflib.set_vars({self._strength_var: strength})
-        self.strength = strength
-
-    def _increment_acc(self, name, expr):
-        with tf.name_scope('acc_' + name):
-            with tf.control_dependencies(None):
-                acc_var = tf.Variable(tf.zeros(2), name=name, trainable=False) # [acc_num, acc_sum]
-            if name not in self._acc_vars:
-                self._acc_vars[name] = []
-            self._acc_vars[name].append(acc_var)
-            expr_num = tf.shape(tf.reshape(expr, [-1]))[0]
-            expr_sum = tf.reduce_sum(expr)
-            acc_op = tf.assign_add(acc_var, [expr_num, expr_sum])
-            with tf.control_dependencies([acc_op]):
-                return tf.identity(expr)
-
-    def _read_and_decay_acc(self, name, nimg_delta):
-        acc_vars = self._acc_vars[name]
-        acc_num, acc_sum = tuple(np.sum(tflib.run(acc_vars), axis=0))
-        if nimg_delta > 0:
-            with tflib.absolute_name_scope('Augment'), tf.control_dependencies(None):
-                if self._acc_decay_in is None:
-                    self._acc_decay_in = tf.placeholder(tf.float32, name='acc_decay_in', shape=[])
-                if name not in self._acc_decay_ops:
-                    with tf.name_scope('acc_' + name):
-                        ops = [tf.assign(var, var * self._acc_decay_in) for var in acc_vars]
-                        self._acc_decay_ops[name] = tf.group(*ops)
-            acc_decay = 0.5 ** (nimg_delta / (self.stat_decay_kimg * 1000)) if self.stat_decay_kimg > 0 else 0
-            tflib.run(self._acc_decay_ops[name], {self._acc_decay_in: acc_decay})
-        return acc_sum / acc_num if acc_num > 0 else 0
-
-#----------------------------------------------------------------------------
-# Helper for randomly gating augmentation parameters based on the given probability.
-
-def gate_augment_params(probability, params, disabled_val):
-    shape = tf.shape(params)
-    cond = (tf.random_uniform(shape[:1], 0, 1) < probability)
-    disabled_val = tf.broadcast_to(tf.convert_to_tensor(disabled_val, dtype=params.dtype), shape)
-    return tf.where(cond, params, disabled_val)
-
-#----------------------------------------------------------------------------
-# Helpers for constructing batched transformation matrices.
-
-def construct_batch_of_matrices(*rows):
-    rows = [[tf.convert_to_tensor(x, dtype=tf.float32) for x in r] for r in rows]
-    batch_elems = [x for r in rows for x in r if x.shape.rank != 0]
-    assert all(x.shape.rank == 1 for x in batch_elems)
-    batch_size = tf.shape(batch_elems[0])[0] if len(batch_elems) else 1
-    rows = [[tf.broadcast_to(x, [batch_size]) for x in r] for r in rows]
-    return tf.transpose(rows, [2, 0, 1])
-
-def translate_2d(tx, ty):
-    return construct_batch_of_matrices(
-        [1, 0, tx],
-        [0, 1, ty],
-        [0, 0, 1])
-
-def translate_3d(tx, ty, tz):
-    return construct_batch_of_matrices(
-        [1, 0, 0, tx],
-        [0, 1, 0, ty],
-        [0, 0, 1, tz],
-        [0, 0, 0, 1])
-
-def scale_2d(sx, sy):
-    return construct_batch_of_matrices(
-        [sx, 0,  0],
-        [0,  sy, 0],
-        [0,  0,  1])
-
-def scale_3d(sx, sy, sz):
-    return construct_batch_of_matrices(
-        [sx, 0,  0,  0],
-        [0,  sy, 0,  0],
-        [0,  0,  sz, 0],
-        [0,  0,  0,  1])
-
-def rotate_2d(theta):
-    return construct_batch_of_matrices(
-        [tf.cos(theta), tf.sin(-theta), 0],
-        [tf.sin(theta), tf.cos(theta),  0],
-        [0,             0,              1])
-
-def rotate_3d(v, theta):
-    vx = v[..., 0]; vy = v[..., 1]; vz = v[..., 2]
-    s = tf.sin(theta); c = tf.cos(theta); cc = 1 - c
-    return construct_batch_of_matrices(
-        [vx*vx*cc+c,    vx*vy*cc-vz*s, vx*vz*cc+vy*s, 0],
-        [vy*vx*cc+vz*s, vy*vy*cc+c,    vy*vz*cc-vx*s, 0],
-        [vz*vx*cc-vy*s, vz*vy*cc+vx*s, vz*vz*cc+c,    0],
-        [0,             0,             0,             1])
-
-def translate_2d_inv(tx, ty):
-    return translate_2d(-tx, -ty)
-
-def scale_2d_inv(sx, sy):
-    return scale_2d(1/sx, 1/sy)
-
-def rotate_2d_inv(theta):
-    return rotate_2d(-theta)
+import torch
+from torch_utils import persistence
+from torch_utils import misc
+from torch_utils.ops import upfirdn2d
+from torch_utils.ops import grid_sample_gradfix
+from torch_utils.ops import conv2d_gradfix
 
 #----------------------------------------------------------------------------
 # Coefficients of various wavelet decomposition low-pass filters.
@@ -256,332 +38,394 @@ wavelets = {
 }
 
 #----------------------------------------------------------------------------
+# Helpers for constructing transformation matrices.
+
+def matrix(*rows, device=None):
+    assert all(len(row) == len(rows[0]) for row in rows)
+    elems = [x for row in rows for x in row]
+    ref = [x for x in elems if isinstance(x, torch.Tensor)]
+    if len(ref) == 0:
+        return misc.constant(np.asarray(rows), device=device)
+    assert device is None or device == ref[0].device
+    elems = [x if isinstance(x, torch.Tensor) else misc.constant(x, shape=ref[0].shape, device=ref[0].device) for x in elems]
+    return torch.stack(elems, dim=-1).reshape(ref[0].shape + (len(rows), -1))
+
+def translate2d(tx, ty, **kwargs):
+    return matrix(
+        [1, 0, tx],
+        [0, 1, ty],
+        [0, 0, 1],
+        **kwargs)
+
+def translate3d(tx, ty, tz, **kwargs):
+    return matrix(
+        [1, 0, 0, tx],
+        [0, 1, 0, ty],
+        [0, 0, 1, tz],
+        [0, 0, 0, 1],
+        **kwargs)
+
+def scale2d(sx, sy, **kwargs):
+    return matrix(
+        [sx, 0,  0],
+        [0,  sy, 0],
+        [0,  0,  1],
+        **kwargs)
+
+def scale3d(sx, sy, sz, **kwargs):
+    return matrix(
+        [sx, 0,  0,  0],
+        [0,  sy, 0,  0],
+        [0,  0,  sz, 0],
+        [0,  0,  0,  1],
+        **kwargs)
+
+def rotate2d(theta, **kwargs):
+    return matrix(
+        [torch.cos(theta), torch.sin(-theta), 0],
+        [torch.sin(theta), torch.cos(theta),  0],
+        [0,                0,                 1],
+        **kwargs)
+
+def rotate3d(v, theta, **kwargs):
+    vx = v[..., 0]; vy = v[..., 1]; vz = v[..., 2]
+    s = torch.sin(theta); c = torch.cos(theta); cc = 1 - c
+    return matrix(
+        [vx*vx*cc+c,    vx*vy*cc-vz*s, vx*vz*cc+vy*s, 0],
+        [vy*vx*cc+vz*s, vy*vy*cc+c,    vy*vz*cc-vx*s, 0],
+        [vz*vx*cc-vy*s, vz*vy*cc+vx*s, vz*vz*cc+c,    0],
+        [0,             0,             0,             1],
+        **kwargs)
+
+def translate2d_inv(tx, ty, **kwargs):
+    return translate2d(-tx, -ty, **kwargs)
+
+def scale2d_inv(sx, sy, **kwargs):
+    return scale2d(1 / sx, 1 / sy, **kwargs)
+
+def rotate2d_inv(theta, **kwargs):
+    return rotate2d(-theta, **kwargs)
+
+#----------------------------------------------------------------------------
 # Versatile image augmentation pipeline from the paper
 # "Training Generative Adversarial Networks with Limited Data".
 #
 # All augmentations are disabled by default; individual augmentations can
 # be enabled by setting their probability multipliers to 1.
 
-def augment_pipeline(
-    images,                         # Input images: NCHW, float32, dynamic range [-1,+1].
-    labels,                         # Input labels.
-    strength         = 1,           # Overall multiplier for augmentation probability; can be a Tensor.
-    debug_percentile = None,        # Percentile value for visualizing parameter ranges; None = normal operation.
+@persistence.persistent_class
+class AugmentPipe(torch.nn.Module):
+    def __init__(self,
+        xflip=0, rotate90=0, xint=0, xint_max=0.125,
+        scale=0, rotate=0, aniso=0, xfrac=0, scale_std=0.2, rotate_max=1, aniso_std=0.2, xfrac_std=0.125,
+        brightness=0, contrast=0, lumaflip=0, hue=0, saturation=0, brightness_std=0.2, contrast_std=0.5, hue_max=1, saturation_std=1,
+        imgfilter=0, imgfilter_bands=[1,1,1,1], imgfilter_std=1,
+        noise=0, cutout=0, noise_std=0.1, cutout_size=0.5,
+    ):
+        super().__init__()
+        self.register_buffer('p', torch.ones([]))       # Overall multiplier for augmentation probability.
 
-    # Pixel blitting.
-    xflip            = 0,           # Probability multiplier for x-flip.
-    rotate90         = 0,           # Probability multiplier for 90 degree rotations.
-    xint             = 0,           # Probability multiplier for integer translation.
-    xint_max         = 0.125,       # Range of integer translation, relative to image dimensions.
+        # Pixel blitting.
+        self.xflip            = float(xflip)            # Probability multiplier for x-flip.
+        self.rotate90         = float(rotate90)         # Probability multiplier for 90 degree rotations.
+        self.xint             = float(xint)             # Probability multiplier for integer translation.
+        self.xint_max         = float(xint_max)         # Range of integer translation, relative to image dimensions.
 
-    # General geometric transformations.
-    scale            = 0,           # Probability multiplier for isotropic scaling.
-    rotate           = 0,           # Probability multiplier for arbitrary rotation.
-    aniso            = 0,           # Probability multiplier for anisotropic scaling.
-    xfrac            = 0,           # Probability multiplier for fractional translation.
-    scale_std        = 0.2,         # Log2 standard deviation of isotropic scaling.
-    rotate_max       = 1,           # Range of arbitrary rotation, 1 = full circle.
-    aniso_std        = 0.2,         # Log2 standard deviation of anisotropic scaling.
-    xfrac_std        = 0.125,       # Standard deviation of frational translation, relative to image dimensions.
+        # General geometric transformations.
+        self.scale            = float(scale)            # Probability multiplier for isotropic scaling.
+        self.rotate           = float(rotate)           # Probability multiplier for arbitrary rotation.
+        self.aniso            = float(aniso)            # Probability multiplier for anisotropic scaling.
+        self.xfrac            = float(xfrac)            # Probability multiplier for fractional translation.
+        self.scale_std        = float(scale_std)        # Log2 standard deviation of isotropic scaling.
+        self.rotate_max       = float(rotate_max)       # Range of arbitrary rotation, 1 = full circle.
+        self.aniso_std        = float(aniso_std)        # Log2 standard deviation of anisotropic scaling.
+        self.xfrac_std        = float(xfrac_std)        # Standard deviation of frational translation, relative to image dimensions.
 
-    # Color transformations.
-    brightness       = 0,           # Probability multiplier for brightness.
-    contrast         = 0,           # Probability multiplier for contrast.
-    lumaflip         = 0,           # Probability multiplier for luma flip.
-    hue              = 0,           # Probability multiplier for hue rotation.
-    saturation       = 0,           # Probability multiplier for saturation.
-    brightness_std   = 0.2,         # Standard deviation of brightness.
-    contrast_std     = 0.5,         # Log2 standard deviation of contrast.
-    hue_max          = 1,           # Range of hue rotation, 1 = full circle.
-    saturation_std   = 1,           # Log2 standard deviation of saturation.
+        # Color transformations.
+        self.brightness       = float(brightness)       # Probability multiplier for brightness.
+        self.contrast         = float(contrast)         # Probability multiplier for contrast.
+        self.lumaflip         = float(lumaflip)         # Probability multiplier for luma flip.
+        self.hue              = float(hue)              # Probability multiplier for hue rotation.
+        self.saturation       = float(saturation)       # Probability multiplier for saturation.
+        self.brightness_std   = float(brightness_std)   # Standard deviation of brightness.
+        self.contrast_std     = float(contrast_std)     # Log2 standard deviation of contrast.
+        self.hue_max          = float(hue_max)          # Range of hue rotation, 1 = full circle.
+        self.saturation_std   = float(saturation_std)   # Log2 standard deviation of saturation.
 
-    # Image-space filtering.
-    imgfilter        = 0,           # Probability multiplier for image-space filtering.
-    imgfilter_bands  = [1,1,1,1],   # Probability multipliers for individual frequency bands.
-    imgfilter_std    = 1,           # Log2 standard deviation of image-space filter amplification.
+        # Image-space filtering.
+        self.imgfilter        = float(imgfilter)        # Probability multiplier for image-space filtering.
+        self.imgfilter_bands  = list(imgfilter_bands)   # Probability multipliers for individual frequency bands.
+        self.imgfilter_std    = float(imgfilter_std)    # Log2 standard deviation of image-space filter amplification.
 
-    # Image-space corruptions.
-    noise            = 0,           # Probability multiplier for additive RGB noise.
-    cutout           = 0,           # Probability multiplier for cutout.
-    noise_std        = 0.1,         # Standard deviation of additive RGB noise.
-    cutout_size      = 0.5,         # Size of the cutout rectangle, relative to image dimensions.
-):
-    # Determine input shape.
-    batch, channels, height, width = images.shape.as_list()
-    if batch is None:
-        batch = tf.shape(images)[0]
+        # Image-space corruptions.
+        self.noise            = float(noise)            # Probability multiplier for additive RGB noise.
+        self.cutout           = float(cutout)           # Probability multiplier for cutout.
+        self.noise_std        = float(noise_std)        # Standard deviation of additive RGB noise.
+        self.cutout_size      = float(cutout_size)      # Size of the cutout rectangle, relative to image dimensions.
 
-    # -------------------------------------
-    # Select parameters for pixel blitting.
-    # -------------------------------------
+        # Setup orthogonal lowpass filter for geometric augmentations.
+        self.register_buffer('Hz_geom', upfirdn2d.setup_filter(wavelets['sym6']))
 
-    # Initialize inverse homogeneous 2D transform: G_inv @ pixel_out ==> pixel_in
-    I_3 = tf.eye(3, batch_shape=[batch])
-    G_inv = I_3
-
-    # Apply x-flip with probability (xflip * strength).
-    if xflip > 0:
-        i = tf.floor(tf.random_uniform([batch], 0, 2))
-        i = gate_augment_params(xflip * strength, i, 0)
-        if debug_percentile is not None:
-            i = tf.floor(tf.broadcast_to(debug_percentile, [batch]) * 2)
-        G_inv @= scale_2d_inv(1 - 2 * i, 1)
-
-    # Apply 90 degree rotations with probability (rotate90 * strength).
-    if rotate90 > 0:
-        i = tf.floor(tf.random_uniform([batch], 0, 4))
-        i = gate_augment_params(rotate90 * strength, i, 0)
-        if debug_percentile is not None:
-            i = tf.floor(tf.broadcast_to(debug_percentile, [batch]) * 4)
-        G_inv @= rotate_2d_inv(-np.pi / 2 * i)
-
-    # Apply integer translation with probability (xint * strength).
-    if xint > 0:
-        t = tf.random_uniform([batch, 2], -xint_max, xint_max)
-        t = gate_augment_params(xint * strength, t, 0)
-        if debug_percentile is not None:
-            t = (tf.broadcast_to(debug_percentile, [batch, 2]) * 2 - 1) * xint_max
-        G_inv @= translate_2d_inv(tf.rint(t[:,0] * width), tf.rint(t[:,1] * height))
-
-    # --------------------------------------------------------
-    # Select parameters for general geometric transformations.
-    # --------------------------------------------------------
-
-    # Apply isotropic scaling with probability (scale * strength).
-    if scale > 0:
-        s = 2 ** tf.random_normal([batch], 0, scale_std)
-        s = gate_augment_params(scale * strength, s, 1)
-        if debug_percentile is not None:
-            s = 2 ** (tflib.erfinv(tf.broadcast_to(debug_percentile, [batch]) * 2 - 1) * scale_std)
-        G_inv @= scale_2d_inv(s, s)
-
-    # Apply pre-rotation with probability p_rot.
-    p_rot = 1 - tf.sqrt(tf.cast(tf.maximum(1 - rotate * strength, 0), tf.float32)) # P(pre OR post) = p
-    if rotate > 0:
-        theta = tf.random_uniform([batch], -np.pi * rotate_max, np.pi * rotate_max)
-        theta = gate_augment_params(p_rot, theta, 0)
-        if debug_percentile is not None:
-            theta = (tf.broadcast_to(debug_percentile, [batch]) * 2 - 1) * np.pi * rotate_max
-        G_inv @= rotate_2d_inv(-theta) # Before anisotropic scaling.
-
-    # Apply anisotropic scaling with probability (aniso * strength).
-    if aniso > 0:
-        s = 2 ** tf.random_normal([batch], 0, aniso_std)
-        s = gate_augment_params(aniso * strength, s, 1)
-        if debug_percentile is not None:
-            s = 2 ** (tflib.erfinv(tf.broadcast_to(debug_percentile, [batch]) * 2 - 1) * aniso_std)
-        G_inv @= scale_2d_inv(s, 1 / s)
-
-    # Apply post-rotation with probability p_rot.
-    if rotate > 0:
-        theta = tf.random_uniform([batch], -np.pi * rotate_max, np.pi * rotate_max)
-        theta = gate_augment_params(p_rot, theta, 0)
-        if debug_percentile is not None:
-            theta = tf.zeros([batch])
-        G_inv @= rotate_2d_inv(-theta) # After anisotropic scaling.
-
-    # Apply fractional translation with probability (xfrac * strength).
-    if xfrac > 0:
-        t = tf.random_normal([batch, 2], 0, xfrac_std)
-        t = gate_augment_params(xfrac * strength, t, 0)
-        if debug_percentile is not None:
-            t = tflib.erfinv(tf.broadcast_to(debug_percentile, [batch, 2]) * 2 - 1) * xfrac_std
-        G_inv @= translate_2d_inv(t[:,0] * width, t[:,1] * height)
-
-    # ----------------------------------
-    # Execute geometric transformations.
-    # ----------------------------------
-
-    # Execute if the transform is not identity.
-    if G_inv is not I_3:
-
-        # Setup orthogonal lowpass filter.
-        Hz = wavelets['sym6']
-        Hz = np.asarray(Hz, dtype=np.float32)
-        Hz = np.reshape(Hz, [-1, 1, 1]).repeat(channels, axis=1) # [tap, channel, 1]
-        Hz_pad = Hz.shape[0] // 4
-
-        # Calculate padding.
-        cx = (width - 1) / 2
-        cy = (height - 1) / 2
-        cp = np.transpose([[-cx, -cy, 1], [cx, -cy, 1], [cx, cy, 1], [-cx, cy, 1]]) # [xyz, idx]
-        cp = G_inv @ cp[np.newaxis] # [batch, xyz, idx]
-        cp = cp[:, :2, :] # [batch, xy, idx]
-        m_lo = tf.ceil(tf.reduce_max(-cp, axis=[0,2]) - [cx, cy] + Hz_pad * 2)
-        m_hi = tf.ceil(tf.reduce_max( cp, axis=[0,2]) - [cx, cy] + Hz_pad * 2)
-        m_lo = tf.clip_by_value(m_lo, [0, 0], [width-1, height-1])
-        m_hi = tf.clip_by_value(m_hi, [0, 0], [width-1, height-1])
-
-        # Pad image and adjust origin.
-        images = tf.transpose(images, [0, 2, 3, 1]) # NCHW => NHWC
-        pad = [[0, 0], [m_lo[1], m_hi[1]], [m_lo[0], m_hi[0]], [0, 0]]
-        images = tf.pad(tensor=images, paddings=pad, mode='REFLECT')
-        T_in = translate_2d(cx + m_lo[0], cy + m_lo[1])
-        T_out = translate_2d_inv(cx + Hz_pad, cy + Hz_pad)
-        G_inv = T_in @ G_inv @ T_out
-
-        # Upsample.
-        shape = [batch, tf.shape(images)[1] * 2, tf.shape(images)[2] * 2, channels]
-        images = tf.nn.depthwise_conv2d_backprop_input(input_sizes=shape, filter=Hz[np.newaxis, :], out_backprop=images, strides=[1,2,2,1], padding='SAME', data_format='NHWC')
-        images = tf.nn.depthwise_conv2d_backprop_input(input_sizes=shape, filter=Hz[:, np.newaxis], out_backprop=images, strides=[1,1,1,1], padding='SAME', data_format='NHWC')
-        G_inv = scale_2d(2, 2) @ G_inv @ scale_2d_inv(2, 2) # Account for the increased resolution.
-
-        # Execute transformation.
-        transforms = tf.reshape(G_inv, [-1, 9])[:, :8]
-        shape = [(height + Hz_pad * 2) * 2, (width + Hz_pad * 2) * 2]
-        images = tf.contrib.image.transform(images=images, transforms=transforms, output_shape=shape, interpolation='BILINEAR')
-
-        # Downsample and crop.
-        images = tf.nn.depthwise_conv2d(input=images, filter=Hz[np.newaxis,:], strides=[1,1,1,1], padding='SAME', data_format='NHWC')
-        images = tf.nn.depthwise_conv2d(input=images, filter=Hz[:,np.newaxis], strides=[1,2,2,1], padding='SAME', data_format='NHWC')
-        images = images[:, Hz_pad : height + Hz_pad, Hz_pad : width + Hz_pad, :]
-        images = tf.transpose(images, [0, 3, 1, 2]) # NHWC => NCHW
-
-    # --------------------------------------------
-    # Select parameters for color transformations.
-    # --------------------------------------------
-
-    # Initialize homogeneous 3D transformation matrix: C @ color_in ==> color_out
-    I_4 = tf.eye(4, batch_shape=[batch])
-    C = I_4
-
-    # Apply brightness with probability (brightness * strength).
-    if brightness > 0:
-        b = tf.random_normal([batch], 0, brightness_std)
-        b = gate_augment_params(brightness * strength, b, 0)
-        if debug_percentile is not None:
-            b = tflib.erfinv(tf.broadcast_to(debug_percentile, [batch]) * 2 - 1) * brightness_std
-        C = translate_3d(b, b, b) @ C
-
-    # Apply contrast with probability (contrast * strength).
-    if contrast > 0:
-        c = 2 ** tf.random_normal([batch], 0, contrast_std)
-        c = gate_augment_params(contrast * strength, c, 1)
-        if debug_percentile is not None:
-            c = 2 ** (tflib.erfinv(tf.broadcast_to(debug_percentile, [batch]) * 2 - 1) * contrast_std)
-        C = scale_3d(c, c, c) @ C
-
-    # Apply luma flip with probability (lumaflip * strength).
-    v = np.array([1, 1, 1, 0]) / np.sqrt(3) # Luma axis.
-    if lumaflip > 0:
-        i = tf.floor(tf.random_uniform([batch], 0, 2))
-        i = gate_augment_params(lumaflip * strength, i, 0)
-        if debug_percentile is not None:
-            i = tf.floor(tf.broadcast_to(debug_percentile, [batch]) * 2)
-        i = tf.reshape(i, [batch, 1, 1])
-        C = (I_4 - 2 * np.outer(v, v) * i) @ C # Householder reflection.
-
-    # Apply hue rotation with probability (hue * strength).
-    if hue > 0 and channels > 1:
-        theta = tf.random_uniform([batch], -np.pi * hue_max, np.pi * hue_max)
-        theta = gate_augment_params(hue * strength, theta, 0)
-        if debug_percentile is not None:
-            theta = (tf.broadcast_to(debug_percentile, [batch]) * 2 - 1) * np.pi * hue_max
-        C = rotate_3d(v, theta) @ C # Rotate around v.
-
-    # Apply saturation with probability (saturation * strength).
-    if saturation > 0 and channels > 1:
-        s = 2 ** tf.random_normal([batch], 0, saturation_std)
-        s = gate_augment_params(saturation * strength, s, 1)
-        if debug_percentile is not None:
-            s = 2 ** (tflib.erfinv(tf.broadcast_to(debug_percentile, [batch]) * 2 - 1) * saturation_std)
-        s = tf.reshape(s, [batch, 1, 1])
-        C = (np.outer(v, v) + (I_4 - np.outer(v, v)) * s) @ C
-
-    # ------------------------------
-    # Execute color transformations.
-    # ------------------------------
-
-    # Execute if the transform is not identity.
-    if C is not I_4:
-        images = tf.reshape(images, [batch, channels, height * width])
-        if channels == 3:
-            images = C[:, :3, :3] @ images + C[:, :3, 3:]
-        elif channels == 1:
-            C = tf.reduce_mean(C[:, :3, :], axis=1, keepdims=True)
-            images = images * tf.reduce_sum(C[:, :, :3], axis=2, keepdims=True) + C[:, :, 3:]
-        else:
-            raise ValueError('Image must be RGB (3 channels) or L (1 channel)')
-        images = tf.reshape(images, [batch, channels, height, width])
-
-    # ----------------------
-    # Image-space filtering.
-    # ----------------------
-
-    if imgfilter > 0:
-        num_bands = 4
-        assert len(imgfilter_bands) == num_bands
-        expected_power = np.array([10, 1, 1, 1]) / 13 # Expected power spectrum (1/f).
-
-        # Apply amplification for each band with probability (imgfilter * strength * band_strength).
-        g = tf.ones([batch, num_bands]) # Global gain vector (identity).
-        for i, band_strength in enumerate(imgfilter_bands):
-            t_i = 2 ** tf.random_normal([batch], 0, imgfilter_std)
-            t_i = gate_augment_params(imgfilter * strength * band_strength, t_i, 1)
-            if debug_percentile is not None:
-                t_i = 2 ** (tflib.erfinv(tf.broadcast_to(debug_percentile, [batch]) * 2 - 1) * imgfilter_std) if band_strength > 0 else tf.ones([batch])
-            t = tf.ones([batch, num_bands]) # Temporary gain vector.
-            t = tf.concat([t[:, :i], t_i[:, np.newaxis], t[:, i+1:]], axis=-1) # Replace i'th element.
-            t /= tf.sqrt(tf.reduce_sum(expected_power * tf.square(t), axis=-1, keepdims=True)) # Normalize power.
-            g *= t # Accumulate into global gain.
-
-        # Construct filter bank.
-        Hz_lo = wavelets['sym2']
-        Hz_lo = np.asarray(Hz_lo, dtype=np.float32)     # H(z)
+        # Construct filter bank for image-space filtering.
+        Hz_lo = np.asarray(wavelets['sym2'])            # H(z)
         Hz_hi = Hz_lo * ((-1) ** np.arange(Hz_lo.size)) # H(-z)
         Hz_lo2 = np.convolve(Hz_lo, Hz_lo[::-1]) / 2    # H(z) * H(z^-1) / 2
         Hz_hi2 = np.convolve(Hz_hi, Hz_hi[::-1]) / 2    # H(-z) * H(-z^-1) / 2
-        Hz_bands = np.eye(num_bands, 1)                 # Bandpass(H(z), b_i)
-        for i in range(1, num_bands):
-            Hz_bands = np.dstack([Hz_bands, np.zeros_like(Hz_bands)]).reshape(num_bands, -1)[:, :-1]
-            Hz_bands = scipy.signal.convolve(Hz_bands, [Hz_lo2])
-            Hz_bands[i, (Hz_bands.shape[1] - Hz_hi2.size) // 2 : (Hz_bands.shape[1] + Hz_hi2.size) // 2] += Hz_hi2
+        Hz_fbank = np.eye(4, 1)                         # Bandpass(H(z), b_i)
+        for i in range(1, Hz_fbank.shape[0]):
+            Hz_fbank = np.dstack([Hz_fbank, np.zeros_like(Hz_fbank)]).reshape(Hz_fbank.shape[0], -1)[:, :-1]
+            Hz_fbank = scipy.signal.convolve(Hz_fbank, [Hz_lo2])
+            Hz_fbank[i, (Hz_fbank.shape[1] - Hz_hi2.size) // 2 : (Hz_fbank.shape[1] + Hz_hi2.size) // 2] += Hz_hi2
+        self.register_buffer('Hz_fbank', torch.as_tensor(Hz_fbank, dtype=torch.float32))
 
-        # Construct combined amplification filter.
-        Hz_prime = g @ Hz_bands # [batch, tap]
-        Hz_prime = tf.transpose(Hz_prime) # [tap, batch]
-        Hz_prime = tf.tile(Hz_prime[:, :, np.newaxis], [1, 1, channels]) # [tap, batch, channels]
-        Hz_prime = tf.reshape(Hz_prime, [-1, batch * channels, 1]) # [tap, batch * channels, 1]
-
-        # Apply filter.
-        images = tf.reshape(images, [1, -1, height, width])
-        pad = Hz_bands.shape[1] // 2
-        pad = [[0,0], [0,0], [pad, pad], [pad, pad]]
-        images = tf.pad(tensor=images, paddings=pad, mode='REFLECT')
-        images = tf.nn.depthwise_conv2d(input=images, filter=Hz_prime[np.newaxis,:], strides=[1,1,1,1], padding='VALID', data_format='NCHW')
-        images = tf.nn.depthwise_conv2d(input=images, filter=Hz_prime[:,np.newaxis], strides=[1,1,1,1], padding='VALID', data_format='NCHW')
-        images = tf.reshape(images, [-1, channels, height, width])
-
-    # ------------------------
-    # Image-space corruptions.
-    # ------------------------
-
-    # Apply additive RGB noise with probability (noise * strength).
-    if noise > 0:
-        sigma = tf.abs(tf.random_normal([batch], 0, noise_std))
-        sigma = gate_augment_params(noise * strength, sigma, 0)
+    def forward(self, images, debug_percentile=None):
+        assert isinstance(images, torch.Tensor) and images.ndim == 4
+        batch_size, num_channels, height, width = images.shape
+        device = images.device
         if debug_percentile is not None:
-            sigma = tflib.erfinv(tf.broadcast_to(debug_percentile, [batch])) * noise_std
-        sigma = tf.reshape(sigma, [-1, 1, 1, 1])
-        images += tf.random_normal([batch, channels, height, width]) * sigma
+            debug_percentile = torch.as_tensor(debug_percentile, dtype=torch.float32, device=device)
 
-    # Apply cutout with probability (cutout * strength).
-    if cutout > 0:
-        size = tf.fill([batch, 2], cutout_size)
-        size = gate_augment_params(cutout * strength, size, 0)
-        center = tf.random_uniform([batch, 2], 0, 1)
-        if debug_percentile is not None:
-            size = tf.fill([batch, 2], cutout_size)
-            center = tf.broadcast_to(debug_percentile, [batch, 2])
-        size = tf.reshape(size, [batch, 2, 1, 1, 1])
-        center = tf.reshape(center, [batch, 2, 1, 1, 1])
-        coord_x = tf.reshape(tf.range(width, dtype=tf.float32), [1, 1, 1, width])
-        coord_y = tf.reshape(tf.range(height, dtype=tf.float32), [1, 1, height, 1])
-        mask_x = (tf.abs((coord_x + 0.5) / width - center[:, 0]) >= size[:, 0] / 2)
-        mask_y = (tf.abs((coord_y + 0.5) / height - center[:, 1]) >= size[:, 1] / 2)
-        mask = tf.cast(tf.logical_or(mask_x, mask_y), tf.float32)
-        images *= mask
+        # -------------------------------------
+        # Select parameters for pixel blitting.
+        # -------------------------------------
 
-    return images, labels
+        # Initialize inverse homogeneous 2D transform: G_inv @ pixel_out ==> pixel_in
+        I_3 = torch.eye(3, device=device)
+        G_inv = I_3
+
+        # Apply x-flip with probability (xflip * strength).
+        if self.xflip > 0:
+            i = torch.floor(torch.rand([batch_size], device=device) * 2)
+            i = torch.where(torch.rand([batch_size], device=device) < self.xflip * self.p, i, torch.zeros_like(i))
+            if debug_percentile is not None:
+                i = torch.full_like(i, torch.floor(debug_percentile * 2))
+            G_inv = G_inv @ scale2d_inv(1 - 2 * i, 1)
+
+        # Apply 90 degree rotations with probability (rotate90 * strength).
+        if self.rotate90 > 0:
+            i = torch.floor(torch.rand([batch_size], device=device) * 4)
+            i = torch.where(torch.rand([batch_size], device=device) < self.rotate90 * self.p, i, torch.zeros_like(i))
+            if debug_percentile is not None:
+                i = torch.full_like(i, torch.floor(debug_percentile * 4))
+            G_inv = G_inv @ rotate2d_inv(-np.pi / 2 * i)
+
+        # Apply integer translation with probability (xint * strength).
+        if self.xint > 0:
+            t = (torch.rand([batch_size, 2], device=device) * 2 - 1) * self.xint_max
+            t = torch.where(torch.rand([batch_size, 1], device=device) < self.xint * self.p, t, torch.zeros_like(t))
+            if debug_percentile is not None:
+                t = torch.full_like(t, (debug_percentile * 2 - 1) * self.xint_max)
+            G_inv = G_inv @ translate2d_inv(torch.round(t[:,0] * width), torch.round(t[:,1] * height))
+
+        # --------------------------------------------------------
+        # Select parameters for general geometric transformations.
+        # --------------------------------------------------------
+
+        # Apply isotropic scaling with probability (scale * strength).
+        if self.scale > 0:
+            s = torch.exp2(torch.randn([batch_size], device=device) * self.scale_std)
+            s = torch.where(torch.rand([batch_size], device=device) < self.scale * self.p, s, torch.ones_like(s))
+            if debug_percentile is not None:
+                s = torch.full_like(s, torch.exp2(torch.erfinv(debug_percentile * 2 - 1) * self.scale_std))
+            G_inv = G_inv @ scale2d_inv(s, s)
+
+        # Apply pre-rotation with probability p_rot.
+        p_rot = 1 - torch.sqrt((1 - self.rotate * self.p).clamp(0, 1)) # P(pre OR post) = p
+        if self.rotate > 0:
+            theta = (torch.rand([batch_size], device=device) * 2 - 1) * np.pi * self.rotate_max
+            theta = torch.where(torch.rand([batch_size], device=device) < p_rot, theta, torch.zeros_like(theta))
+            if debug_percentile is not None:
+                theta = torch.full_like(theta, (debug_percentile * 2 - 1) * np.pi * self.rotate_max)
+            G_inv = G_inv @ rotate2d_inv(-theta) # Before anisotropic scaling.
+
+        # Apply anisotropic scaling with probability (aniso * strength).
+        if self.aniso > 0:
+            s = torch.exp2(torch.randn([batch_size], device=device) * self.aniso_std)
+            s = torch.where(torch.rand([batch_size], device=device) < self.aniso * self.p, s, torch.ones_like(s))
+            if debug_percentile is not None:
+                s = torch.full_like(s, torch.exp2(torch.erfinv(debug_percentile * 2 - 1) * self.aniso_std))
+            G_inv = G_inv @ scale2d_inv(s, 1 / s)
+
+        # Apply post-rotation with probability p_rot.
+        if self.rotate > 0:
+            theta = (torch.rand([batch_size], device=device) * 2 - 1) * np.pi * self.rotate_max
+            theta = torch.where(torch.rand([batch_size], device=device) < p_rot, theta, torch.zeros_like(theta))
+            if debug_percentile is not None:
+                theta = torch.zeros_like(theta)
+            G_inv = G_inv @ rotate2d_inv(-theta) # After anisotropic scaling.
+
+        # Apply fractional translation with probability (xfrac * strength).
+        if self.xfrac > 0:
+            t = torch.randn([batch_size, 2], device=device) * self.xfrac_std
+            t = torch.where(torch.rand([batch_size, 1], device=device) < self.xfrac * self.p, t, torch.zeros_like(t))
+            if debug_percentile is not None:
+                t = torch.full_like(t, torch.erfinv(debug_percentile * 2 - 1) * self.xfrac_std)
+            G_inv = G_inv @ translate2d_inv(t[:,0] * width, t[:,1] * height)
+
+        # ----------------------------------
+        # Execute geometric transformations.
+        # ----------------------------------
+
+        # Execute if the transform is not identity.
+        if G_inv is not I_3:
+
+            # Calculate padding.
+            cx = (width - 1) / 2
+            cy = (height - 1) / 2
+            cp = matrix([-cx, -cy, 1], [cx, -cy, 1], [cx, cy, 1], [-cx, cy, 1], device=device) # [idx, xyz]
+            cp = G_inv @ cp.t() # [batch, xyz, idx]
+            Hz_pad = self.Hz_geom.shape[0] // 4
+            margin = cp[:, :2, :].permute(1, 0, 2).flatten(1) # [xy, batch * idx]
+            margin = torch.cat([-margin, margin]).max(dim=1).values # [x0, y0, x1, y1]
+            margin = margin + misc.constant([Hz_pad * 2 - cx, Hz_pad * 2 - cy] * 2, device=device)
+            margin = margin.max(misc.constant([0, 0] * 2, device=device))
+            margin = margin.min(misc.constant([width-1, height-1] * 2, device=device))
+            mx0, my0, mx1, my1 = margin.ceil().to(torch.int32)
+
+            # Pad image and adjust origin.
+            images = torch.nn.functional.pad(input=images, pad=[mx0,mx1,my0,my1], mode='reflect')
+            G_inv = translate2d((mx0 - mx1) / 2, (my0 - my1) / 2) @ G_inv
+
+            # Upsample.
+            images = upfirdn2d.upsample2d(x=images, f=self.Hz_geom, up=2)
+            G_inv = scale2d(2, 2, device=device) @ G_inv @ scale2d_inv(2, 2, device=device)
+            G_inv = translate2d(-0.5, -0.5, device=device) @ G_inv @ translate2d_inv(-0.5, -0.5, device=device)
+
+            # Execute transformation.
+            shape = [batch_size, num_channels, (height + Hz_pad * 2) * 2, (width + Hz_pad * 2) * 2]
+            G_inv = scale2d(2 / images.shape[3], 2 / images.shape[2], device=device) @ G_inv @ scale2d_inv(2 / shape[3], 2 / shape[2], device=device)
+            grid = torch.nn.functional.affine_grid(theta=G_inv[:,:2,:], size=shape, align_corners=False)
+            images = grid_sample_gradfix.grid_sample(images, grid)
+
+            # Downsample and crop.
+            images = upfirdn2d.downsample2d(x=images, f=self.Hz_geom, down=2, padding=-Hz_pad*2, flip_filter=True)
+
+        # --------------------------------------------
+        # Select parameters for color transformations.
+        # --------------------------------------------
+
+        # Initialize homogeneous 3D transformation matrix: C @ color_in ==> color_out
+        I_4 = torch.eye(4, device=device)
+        C = I_4
+
+        # Apply brightness with probability (brightness * strength).
+        if self.brightness > 0:
+            b = torch.randn([batch_size], device=device) * self.brightness_std
+            b = torch.where(torch.rand([batch_size], device=device) < self.brightness * self.p, b, torch.zeros_like(b))
+            if debug_percentile is not None:
+                b = torch.full_like(b, torch.erfinv(debug_percentile * 2 - 1) * self.brightness_std)
+            C = translate3d(b, b, b) @ C
+
+        # Apply contrast with probability (contrast * strength).
+        if self.contrast > 0:
+            c = torch.exp2(torch.randn([batch_size], device=device) * self.contrast_std)
+            c = torch.where(torch.rand([batch_size], device=device) < self.contrast * self.p, c, torch.ones_like(c))
+            if debug_percentile is not None:
+                c = torch.full_like(c, torch.exp2(torch.erfinv(debug_percentile * 2 - 1) * self.contrast_std))
+            C = scale3d(c, c, c) @ C
+
+        # Apply luma flip with probability (lumaflip * strength).
+        v = misc.constant(np.asarray([1, 1, 1, 0]) / np.sqrt(3), device=device) # Luma axis.
+        if self.lumaflip > 0:
+            i = torch.floor(torch.rand([batch_size, 1, 1], device=device) * 2)
+            i = torch.where(torch.rand([batch_size, 1, 1], device=device) < self.lumaflip * self.p, i, torch.zeros_like(i))
+            if debug_percentile is not None:
+                i = torch.full_like(i, torch.floor(debug_percentile * 2))
+            C = (I_4 - 2 * v.ger(v) * i) @ C # Householder reflection.
+
+        # Apply hue rotation with probability (hue * strength).
+        if self.hue > 0 and num_channels > 1:
+            theta = (torch.rand([batch_size], device=device) * 2 - 1) * np.pi * self.hue_max
+            theta = torch.where(torch.rand([batch_size], device=device) < self.hue * self.p, theta, torch.zeros_like(theta))
+            if debug_percentile is not None:
+                theta = torch.full_like(theta, (debug_percentile * 2 - 1) * np.pi * self.hue_max)
+            C = rotate3d(v, theta) @ C # Rotate around v.
+
+        # Apply saturation with probability (saturation * strength).
+        if self.saturation > 0 and num_channels > 1:
+            s = torch.exp2(torch.randn([batch_size, 1, 1], device=device) * self.saturation_std)
+            s = torch.where(torch.rand([batch_size, 1, 1], device=device) < self.saturation * self.p, s, torch.ones_like(s))
+            if debug_percentile is not None:
+                s = torch.full_like(s, torch.exp2(torch.erfinv(debug_percentile * 2 - 1) * self.saturation_std))
+            C = (v.ger(v) + (I_4 - v.ger(v)) * s) @ C
+
+        # ------------------------------
+        # Execute color transformations.
+        # ------------------------------
+
+        # Execute if the transform is not identity.
+        if C is not I_4:
+            images = images.reshape([batch_size, num_channels, height * width])
+            if num_channels == 3:
+                images = C[:, :3, :3] @ images + C[:, :3, 3:]
+            elif num_channels == 1:
+                C = C[:, :3, :].mean(dim=1, keepdims=True)
+                images = images * C[:, :, :3].sum(dim=2, keepdims=True) + C[:, :, 3:]
+            else:
+                raise ValueError('Image must be RGB (3 channels) or L (1 channel)')
+            images = images.reshape([batch_size, num_channels, height, width])
+
+        # ----------------------
+        # Image-space filtering.
+        # ----------------------
+
+        if self.imgfilter > 0:
+            num_bands = self.Hz_fbank.shape[0]
+            assert len(self.imgfilter_bands) == num_bands
+            expected_power = misc.constant(np.array([10, 1, 1, 1]) / 13, device=device) # Expected power spectrum (1/f).
+
+            # Apply amplification for each band with probability (imgfilter * strength * band_strength).
+            g = torch.ones([batch_size, num_bands], device=device) # Global gain vector (identity).
+            for i, band_strength in enumerate(self.imgfilter_bands):
+                t_i = torch.exp2(torch.randn([batch_size], device=device) * self.imgfilter_std)
+                t_i = torch.where(torch.rand([batch_size], device=device) < self.imgfilter * self.p * band_strength, t_i, torch.ones_like(t_i))
+                if debug_percentile is not None:
+                    t_i = torch.full_like(t_i, torch.exp2(torch.erfinv(debug_percentile * 2 - 1) * self.imgfilter_std)) if band_strength > 0 else torch.ones_like(t_i)
+                t = torch.ones([batch_size, num_bands], device=device)                  # Temporary gain vector.
+                t[:, i] = t_i                                                           # Replace i'th element.
+                t = t / (expected_power * t.square()).sum(dim=-1, keepdims=True).sqrt() # Normalize power.
+                g = g * t                                                               # Accumulate into global gain.
+
+            # Construct combined amplification filter.
+            Hz_prime = g @ self.Hz_fbank                                    # [batch, tap]
+            Hz_prime = Hz_prime.unsqueeze(1).repeat([1, num_channels, 1])   # [batch, channels, tap]
+            Hz_prime = Hz_prime.reshape([batch_size * num_channels, 1, -1]) # [batch * channels, 1, tap]
+
+            # Apply filter.
+            p = self.Hz_fbank.shape[1] // 2
+            images = images.reshape([1, batch_size * num_channels, height, width])
+            images = torch.nn.functional.pad(input=images, pad=[p,p,p,p], mode='reflect')
+            images = conv2d_gradfix.conv2d(input=images, weight=Hz_prime.unsqueeze(2), groups=batch_size*num_channels)
+            images = conv2d_gradfix.conv2d(input=images, weight=Hz_prime.unsqueeze(3), groups=batch_size*num_channels)
+            images = images.reshape([batch_size, num_channels, height, width])
+
+        # ------------------------
+        # Image-space corruptions.
+        # ------------------------
+
+        # Apply additive RGB noise with probability (noise * strength).
+        if self.noise > 0:
+            sigma = torch.randn([batch_size, 1, 1, 1], device=device).abs() * self.noise_std
+            sigma = torch.where(torch.rand([batch_size, 1, 1, 1], device=device) < self.noise * self.p, sigma, torch.zeros_like(sigma))
+            if debug_percentile is not None:
+                sigma = torch.full_like(sigma, torch.erfinv(debug_percentile) * self.noise_std)
+            images = images + torch.randn([batch_size, num_channels, height, width], device=device) * sigma
+
+        # Apply cutout with probability (cutout * strength).
+        if self.cutout > 0:
+            size = torch.full([batch_size, 2, 1, 1, 1], self.cutout_size, device=device)
+            size = torch.where(torch.rand([batch_size, 1, 1, 1, 1], device=device) < self.cutout * self.p, size, torch.zeros_like(size))
+            center = torch.rand([batch_size, 2, 1, 1, 1], device=device)
+            if debug_percentile is not None:
+                size = torch.full_like(size, self.cutout_size)
+                center = torch.full_like(center, debug_percentile)
+            coord_x = torch.arange(width, device=device).reshape([1, 1, 1, -1])
+            coord_y = torch.arange(height, device=device).reshape([1, 1, -1, 1])
+            mask_x = (((coord_x + 0.5) / width - center[:, 0]).abs() >= size[:, 0] / 2)
+            mask_y = (((coord_y + 0.5) / height - center[:, 1]).abs() >= size[:, 1] / 2)
+            mask = torch.logical_or(mask_x, mask_y).to(torch.float32)
+            images = images * mask
+
+        return images
 
 #----------------------------------------------------------------------------

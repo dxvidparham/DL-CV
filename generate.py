@@ -1,4 +1,4 @@
-# Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
 #
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -8,63 +8,21 @@
 
 """Generate images using pretrained network pickle."""
 
-import argparse
 import os
-import pickle
 import re
+from typing import List, Optional
 
+import click
+import dnnlib
 import numpy as np
 import PIL.Image
+import torch
 
-import dnnlib
-import dnnlib.tflib as tflib
-
-#----------------------------------------------------------------------------
-
-def generate_images(network_pkl, seeds, truncation_psi, outdir, class_idx, dlatents_npz):
-    tflib.init_tf()
-    print('Loading networks from "%s"...' % network_pkl)
-    with dnnlib.util.open_url(network_pkl) as fp:
-        _G, _D, Gs = pickle.load(fp)
-
-    os.makedirs(outdir, exist_ok=True)
-
-    # Render images for a given dlatent vector.
-    if dlatents_npz is not None:
-        print(f'Generating images from dlatents file "{dlatents_npz}"')
-        dlatents = np.load(dlatents_npz)['dlatents']
-        assert dlatents.shape[1:] == (18, 512) # [N, 18, 512]
-        imgs = Gs.components.synthesis.run(dlatents, output_transform=dict(func=tflib.convert_images_to_uint8, nchw_to_nhwc=True))
-        for i, img in enumerate(imgs):
-            fname = f'{outdir}/dlatent{i:02d}.png'
-            print (f'Saved {fname}')
-            PIL.Image.fromarray(img, 'RGB').save(fname)
-        return
-
-    # Render images for dlatents initialized from random seeds.
-    Gs_kwargs = {
-        'output_transform': dict(func=tflib.convert_images_to_uint8, nchw_to_nhwc=True),
-        'randomize_noise': False
-    }
-    if truncation_psi is not None:
-        Gs_kwargs['truncation_psi'] = truncation_psi
-
-    noise_vars = [var for name, var in Gs.components.synthesis.vars.items() if name.startswith('noise')]
-    label = np.zeros([1] + Gs.input_shapes[1][1:])
-    if class_idx is not None:
-        label[:, class_idx] = 1
-
-    for seed_idx, seed in enumerate(seeds):
-        print('Generating image for seed %d (%d/%d) ...' % (seed, seed_idx, len(seeds)))
-        rnd = np.random.RandomState(seed)
-        z = rnd.randn(1, *Gs.input_shape[1:]) # [minibatch, component]
-        tflib.set_vars({var: rnd.randn(*var.shape.as_list()) for var in noise_vars}) # [height, width]
-        images = Gs.run(z, label, **Gs_kwargs) # [minibatch, height, width, channel]
-        PIL.Image.fromarray(images[0], 'RGB').save(f'{outdir}/seed{seed:04d}.png')
+import legacy
 
 #----------------------------------------------------------------------------
 
-def _parse_num_range(s):
+def num_range(s: str) -> List[int]:
     '''Accept either a comma separated list of numbers 'a,b,c' or a range 'a-c' and return as a list of ints.'''
 
     range_re = re.compile(r'^(\d+)-(\d+)$')
@@ -76,48 +34,96 @@ def _parse_num_range(s):
 
 #----------------------------------------------------------------------------
 
-_examples = '''examples:
+@click.command()
+@click.pass_context
+@click.option('--network', 'network_pkl', help='Network pickle filename', required=True)
+@click.option('--seeds', type=num_range, help='List of random seeds')
+@click.option('--trunc', 'truncation_psi', type=float, help='Truncation psi', default=1, show_default=True)
+@click.option('--class', 'class_idx', type=int, help='Class label (unconditional if not specified)')
+@click.option('--noise-mode', help='Noise mode', type=click.Choice(['const', 'random', 'none']), default='const', show_default=True)
+@click.option('--projected-w', help='Projection result file', type=str, metavar='FILE')
+@click.option('--outdir', help='Where to save the output images', type=str, required=True, metavar='DIR')
+def generate_images(
+    ctx: click.Context,
+    network_pkl: str,
+    seeds: Optional[List[int]],
+    truncation_psi: float,
+    noise_mode: str,
+    outdir: str,
+    class_idx: Optional[int],
+    projected_w: Optional[str]
+):
+    """Generate images using pretrained network pickle.
 
-  # Generate curated MetFaces images without truncation (Fig.10 left)
-  python %(prog)s --outdir=out --trunc=1 --seeds=85,265,297,849 \\
-      --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada/pretrained/metfaces.pkl
+    Examples:
 
-  # Generate uncurated MetFaces images with truncation (Fig.12 upper left)
-  python %(prog)s --outdir=out --trunc=0.7 --seeds=600-605 \\
-      --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada/pretrained/metfaces.pkl
+    \b
+    # Generate curated MetFaces images without truncation (Fig.10 left)
+    python generate.py --outdir=out --trunc=1 --seeds=85,265,297,849 \\
+        --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/metfaces.pkl
 
-  # Generate class conditional CIFAR-10 images (Fig.17 left, Car)
-  python %(prog)s --outdir=out --trunc=1 --seeds=0-35 --class=1 \\
-      --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada/pretrained/cifar10.pkl
+    \b
+    # Generate uncurated MetFaces images with truncation (Fig.12 upper left)
+    python generate.py --outdir=out --trunc=0.7 --seeds=600-605 \\
+        --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/metfaces.pkl
 
-  # Render image from projected latent vector
-  python %(prog)s --outdir=out --dlatents=out/dlatents.npz \\
-      --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada/pretrained/ffhq.pkl
-'''
+    \b
+    # Generate class conditional CIFAR-10 images (Fig.17 left, Car)
+    python generate.py --outdir=out --seeds=0-35 --class=1 \\
+        --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/cifar10.pkl
 
-#----------------------------------------------------------------------------
+    \b
+    # Render an image from projected W
+    python generate.py --outdir=out --projected_w=projected_w.npz \\
+        --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/metfaces.pkl
+    """
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='Generate images using pretrained network pickle.',
-        epilog=_examples,
-        formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    print('Loading networks from "%s"...' % network_pkl)
+    device = torch.device('cuda')
+    with dnnlib.util.open_url(network_pkl) as f:
+        G = legacy.load_network_pkl(f)['G_ema'].to(device) # type: ignore
 
-    parser.add_argument('--network', help='Network pickle filename', dest='network_pkl', required=True)
-    g = parser.add_mutually_exclusive_group(required=True)
-    g.add_argument('--seeds', type=_parse_num_range, help='List of random seeds')
-    g.add_argument('--dlatents', dest='dlatents_npz', help='Generate images for saved dlatents')
-    parser.add_argument('--trunc', dest='truncation_psi', type=float, help='Truncation psi (default: %(default)s)', default=0.5)
-    parser.add_argument('--class', dest='class_idx', type=int, help='Class label (default: unconditional)')
-    parser.add_argument('--outdir', help='Where to save the output images', required=True, metavar='DIR')
+    os.makedirs(outdir, exist_ok=True)
 
-    args = parser.parse_args()
-    generate_images(**vars(args))
+    # Synthesize the result of a W projection.
+    if projected_w is not None:
+        if seeds is not None:
+            print ('warn: --seeds is ignored when using --projected-w')
+        print(f'Generating images from projected W "{projected_w}"')
+        ws = np.load(projected_w)['w']
+        ws = torch.tensor(ws, device=device) # pylint: disable=not-callable
+        assert ws.shape[1:] == (G.num_ws, G.w_dim)
+        for idx, w in enumerate(ws):
+            img = G.synthesis(w.unsqueeze(0), noise_mode=noise_mode)
+            img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+            img = PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/proj{idx:02d}.png')
+        return
+
+    if seeds is None:
+        ctx.fail('--seeds option is required when not using --projected-w')
+
+    # Labels.
+    label = torch.zeros([1, G.c_dim], device=device)
+    if G.c_dim != 0:
+        if class_idx is None:
+            ctx.fail('Must specify class label with --class when using a conditional network')
+        label[:, class_idx] = 1
+    else:
+        if class_idx is not None:
+            print ('warn: --class=lbl ignored when running on an unconditional network')
+
+    # Generate images.
+    for seed_idx, seed in enumerate(seeds):
+        print('Generating image for seed %d (%d/%d) ...' % (seed, seed_idx, len(seeds)))
+        z = torch.from_numpy(np.random.RandomState(seed).randn(1, G.z_dim)).to(device)
+        img = G(z, label, truncation_psi=truncation_psi, noise_mode=noise_mode)
+        img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+        PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/seed{seed:04d}.png')
+
 
 #----------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    main()
+    generate_images() # pylint: disable=no-value-for-parameter
 
 #----------------------------------------------------------------------------
