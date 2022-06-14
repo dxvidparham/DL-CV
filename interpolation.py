@@ -16,18 +16,24 @@ with open('model/ffhq.pkl', 'rb') as f:
     G = pickle.load(f)['G_ema'].cuda()  # torch.nn.Module
 z = torch.randn([1, G.z_dim]).cuda()    # latent pytcodes
 c = None                                # class labels (not used in this example)
-img = G(z, c)                           # NCHW, float32, dynamic range [-1, +1]
+# img = G(z, c)                           # NCHW, float32, dynamic range [-1, +1]
 
 
 v1 = np.load(V1)['w']
 v2 = np.load(V2)['w']
 
-
-
 # print(torch.tensor(v1))
-v1 = torch.tensor(v1)
-v2 = torch.tensor(v2)
+v1 = torch.tensor(v1).cuda()
+v2 = torch.tensor(v2).cuda()
 
-img = G(v1, c)
-img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-img_1 = PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/{img_name}.png')
+assert v1.shape[1:] == (G.num_ws, G.w_dim)
+
+# img = G(v1, c)
+
+for idx, w in enumerate(v2):
+            img = G.synthesis(w.unsqueeze(0), noise_mode='const')
+            img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+            img = PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/v1_{idx:02d}.png')
+
+# img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+# img_1 = PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/{img_name}.png')
