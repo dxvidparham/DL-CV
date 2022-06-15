@@ -10,7 +10,7 @@ outdir = "out"
 img_name = "test_alex"
 
 V1 = "./out/alex.npz"
-V2 = "./stylegan2directions/stylegan2directions/age.npy"
+V2 = "./stylegan2directions/stylegan2directions/gender.npy"
 
 # # https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl
 with open('model/ffhq.pkl', 'rb') as f:
