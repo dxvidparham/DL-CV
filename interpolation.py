@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 outdir = "out"
 img_name = "test_alex"
 
-V1 = "./out/alex.npz"
-V2 = "./out/chris.npz"
+V1 = "./out/chris.npz"
+V2 = "./out/karol_aligned.npz"
 
 # # https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl
 with open('model/ffhq.pkl', 'rb') as f:
