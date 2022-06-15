@@ -1,3 +1,4 @@
+#%%
 from dataclasses import dataclass
 import torch
 import pickle
@@ -62,3 +63,4 @@ plt.savefig("out/interpolation.png")
 #         ax[i].set_title('Coeff: %0.1f' % coeff)
 #     [x.axis('off') for x in ax]
 #     plt.show()
+# %%
