@@ -23,7 +23,7 @@ def mean_average_precision(
     """
 
     """
-    Precision: TP/TP+FP -> for all bboxes prediciotns what fraction is correct
+    Precision: TP/TP+FP -> for all bboxes predictions what fraction is correct, 
     Recall: TP/TP+FN -> devide by the total number of ground truth bboxes, from all target boxes what fraction we did predict correctly
 
     Image idx -> confidence score (sorted in descending order) ->  TP or FP -> Precision & Recall -> plot (area under the graph
