@@ -7,13 +7,12 @@ import matplotlib.pyplot as plt
 
 
 outdir = "out"
-img_name = "test_alex"
 
-V1 = "./out/alex.npz"
-V2 = "./stylegan2directions/stylegan2directions/age.npy"
+V1 = "./out/latents/projected_w_alex.npz"
+V2 = "./out/latents/projected_w_karol2.npz"
 
 v1_type = "Alex"
-v2_type = "Chris"
+v2_type = "Karol"
 
 
 
@@ -48,7 +47,7 @@ for idx, w in enumerate(v2):
     x_v2 = img[0].cpu().numpy()
     # img = PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/Chris_projection{idx:02d}.png')
 
-plt.figure(figsize=(20,20))
+fig = plt.figure(figsize=(20,20))
 subplots = [plt.subplot(2, 5, k+1) for k in range(10)]
 subplots[0].imshow(x_v1)
 subplots[0].set_title(v1_type)
@@ -57,12 +56,19 @@ subplots[0].axis('off')
 subplots[9].imshow(x_v2)
 subplots[9].set_title(v2_type)
 subplots[9].axis('off')
-for k in range(1,):
+for k in range(1,9):
     x_k = G.synthesis(torch.lerp(v1[0].unsqueeze(0),v2[0].unsqueeze(0),k/10), noise_mode="const")
     x_k = (x_k.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
     subplots[k].imshow(x_k[0].cpu().numpy())
-    subplots[k].set_title('interpolation')
+    subplots[k].set_title('Interpolation')
     subplots[k].axis('off')
-plt.savefig(f"out/interpolation_{v1_type}_{v2_type}.png")
+# set the spacing between subplots
+plt.subplots_adjust(left=0.1,
+                    bottom=0.1, 
+                    right=0.9, 
+                    top=0.4, 
+                    wspace=0.1, 
+                    hspace=0.1)
+plt.savefig(f"out/interpolation_{v1_type}_{v2_type}.png",bbox_inches="tight")
 
 

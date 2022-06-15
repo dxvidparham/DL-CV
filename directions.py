@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 outdir = "out"
 img_name = "old_chris"
 
-V1 = "./out/chris.npz"
+V1 = "./out/latents/projected_w_david.npz"
 V2 = "./stylegan2directions/age.npy"   # NCHW, float32, dynamic range [-1, +1]
 V2 = "./targets/w_beard.npy"
 
