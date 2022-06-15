@@ -7,10 +7,10 @@ import matplotlib.pyplot as plt
 
 
 outdir = "out"
-img_name = "test_alex"
+img_name = "old_chris"
 
-V1 = "./out/alex.npz"
-V2 = "./stylegan2directions/stylegan2directions/age.npy"
+V1 = "./out/karol_aligned.npz"
+V2 = "./stylegan2directions/age.npy"
 
 # # https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl
 with open('model/ffhq.pkl', 'rb') as f:
@@ -45,7 +45,7 @@ subplots[0].axis('off')
 
 for k in range(1,5):
     new_latent_vector = v1.clone()
-    new_latent_vector[:8] = (v1 + (k*2)*direction)[:8]
+    new_latent_vector[:8] = (v1 + (k*5)*direction)[:8]
     x_k = G.synthesis(new_latent_vector[0].unsqueeze(0), noise_mode="const")
     x_k = (x_k.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
     subplots[k].imshow(x_k[0].cpu().numpy())
