@@ -9,7 +9,7 @@
             "type": "python",
             "request": "attach",
             "connect": {
-                "host": "n-62-11-13",
+                "host": "n-62-20-13",
                 "port": 5678
             }
         },

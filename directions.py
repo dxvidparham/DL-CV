@@ -8,10 +8,15 @@ import matplotlib.pyplot as plt
 
 
 outdir = "out"
-img_name = "test_alex"
+img_name = "old_chris"
 
+<<<<<<< HEAD
 V1 = "./out/chris.npz"
 V2 = "./stylegan2directions/stylegan2directions/gender.npy"
+=======
+V1 = "./out/karol_aligned.npz"
+V2 = "./stylegan2directions/age.npy"
+>>>>>>> 2b04f560c518a593bb3f6e64935660945ad2185c
 
 # # https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl
 with open('model/ffhq.pkl', 'rb') as f:
@@ -57,7 +62,11 @@ for k in range(6,10):
     subplots[k].axis('off')
 for k in range(1,5):
     new_latent_vector = v1.clone()
+<<<<<<< HEAD
     new_latent_vector[:8]= (v1 + (-k*2)*direction)[:8]
+=======
+    new_latent_vector[:8] = (v1 + (k*5)*direction)[:8]
+>>>>>>> 2b04f560c518a593bb3f6e64935660945ad2185c
     x_k = G.synthesis(new_latent_vector[0].unsqueeze(0), noise_mode="const")
     x_k = (x_k.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
     subplots[k].imshow(x_k[0].cpu().numpy())
@@ -74,3 +83,4 @@ plt.savefig("out/interpolation.png")
 #         ax[i].set_title('Coeff: %0.1f' % coeff)
 #     [x.axis('off') for x in ax]
 #     plt.show()
+# %%
