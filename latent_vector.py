@@ -9,13 +9,19 @@ import matplotlib.pyplot as plt
 
 c0 = np.random.random((15,18,512))
 c0[:,1] = c0[:,1] + 3 
+
+c0_reshape = c0.reshape((c0.shape[0],c0.shape[1]*c0.shape[2]))
+
 c1 = np.random.random((15,18,512))
 
-x = np.concatenate((c0,c1), axis=0)
+c1_reshape = c1.reshape((c1.shape[0],c1.shape[1]*c1.shape[2]))
+
+
+x = np.concatenate((c0_reshape,c1_reshape), axis=0)
 
 target = np.append(np.zeros(15),np.ones(15))
 
-clf = svm.SVC()
+clf = svm.SVC(kernel='linear')
 clf.fit(x, target)
 
 
@@ -51,7 +57,12 @@ plt.show()
 print('coef')
 print(clf.coef_)
 
-print('dual_coef', clf.dual_coef_)
+print(clf.coef_.shape)
 
+w_beard = np.array(clf.coef_).reshape((1,c1.shape[1],c1.shape[2]))
+
+print(w_beard.shape)
+
+np.savez('targets/w_beard_test',w_beard)
 
 # %%
