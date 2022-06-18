@@ -139,45 +139,19 @@ def pixelAccuracy(imPred, imLab):
     return (pixel_accuracy, pixel_correct, pixel_labeled)
 
 
-def intersectionAndUnion(imPred, imLab, numClass):
-    """
-    This function takes the prediction and label of a single image,
-    returns intersection and union areas for each class
-    To compute over many images do:
-    for i in range(Nimages):
-        (area_intersection[:,i], area_union[:,i]) = intersectionAndUnion(imPred[i], imLab[i])
-    IoU = 1.0 * np.sum(area_intersection, axis=1) / np.sum(np.spacing(1)+area_union, axis=1)
-    """
-    # Remove classes from unlabeled pixels in gt image.
-    # We should not penalize detections in unlabeled portions of the image.
-    imPred = imPred * (imLab >= 0)
+def intersectionAndUnion(output, target):
+    smooth = 1e-5
 
-    # Compute area intersection:
-    intersection = imPred * (imPred == imLab)
-    (area_intersection, _) = np.histogram(
-        intersection, bins=numClass, range=(1, numClass)
-    )
+    if torch.is_tensor(output):
+        output = torch.sigmoid(output).data.cpu().numpy()
+    if torch.is_tensor(target):
+        target = target.data.cpu().numpy()
+    output_ = output > 0.5
+    target_ = target > 0.5
+    intersection = (output_ & target_).sum()
+    union = (output_ | target_).sum()
 
-    # Compute area union:
-    (area_pred, _) = np.histogram(imPred, bins=numClass, range=(1, numClass))
-    (area_lab, _) = np.histogram(imLab, bins=numClass, range=(1, numClass))
-    area_union = area_pred + area_lab - area_intersection
-    return (area_intersection, area_union)
-
-
-def hist_info(pred, label, num_cls):
-    assert pred.shape == label.shape
-    k = (label >= 0) & (label < num_cls)
-    labeled = np.sum(k)
-    correct = np.sum((pred[k] == label[k]))
-
-    return (
-        np.bincount(
-            num_cls * label[k].astype(int) + pred[k], minlength=num_cls ** 2
-        ).reshape(num_cls, num_cls),
-        labeled,
-        correct,
-    )
+    return (intersection + smooth) / (union + smooth)
 
 
 def compute_score(hist, correct, labeled):
@@ -214,6 +188,14 @@ def dice_coef(output, target):
     intersection = (output * target).sum()
 
     return (2.0 * intersection + smooth) / (output.sum() + target.sum() + smooth)
+
+
+def get_accuracy(preds, label):
+    valid = label >= 0
+    acc_sum = (valid * (preds == label)).sum()
+    valid_sum = valid.sum()
+    acc = float(acc_sum) / (valid_sum + 1e-10)
+    return acc, valid_sum
 
 
 if __name__ == "__main__":
