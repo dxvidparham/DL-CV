@@ -165,6 +165,10 @@ def compute_score(hist, correct, labeled):
     return iu, mean_IU, mean_IU_no_back, mean_pixel_acc
 
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> chris3
 def iou_score(output, target):
     smooth = 1e-5
 
