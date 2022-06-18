@@ -13,6 +13,7 @@
 # for semantic segmentation
 ######################################################################
 import torch
+import torch.nn.functional as F
 import numpy as np
 
 __all__ = [
@@ -105,21 +106,30 @@ def batch_intersection_union(output, target, nclass):
     mini = 1
     maxi = nclass
     nbins = nclass
-    predict = torch.argmax(output, 1) + 1
-    target = target.float() + 1
 
-    predict = predict.float() * (target > 0).float()
-    intersection = predict * (predict == target).float()
+    predict = (F.sigmoid(output) > 0.5).float()
+    target = target.float()
+
+    # predict = predict.float() * (target > 0).float()
+    intersection = (predict == target).float()
+    
+    area_pred = predict.sum()
+    area_lab = target.sum()
+    area_inter = intersection.sum()
+
+    area_union = area_pred + area_lab - area_inter
+
     # areas of intersection and union
     # element 0 in intersection occur the main difference from np.bincount. set boundary to -1 is necessary.
-    area_inter = torch.histc(intersection.cpu(), bins=nbins, min=mini, max=maxi)
-    area_pred = torch.histc(predict.cpu(), bins=nbins, min=mini, max=maxi)
-    area_lab = torch.histc(target.cpu(), bins=nbins, min=mini, max=maxi)
-    area_union = area_pred + area_lab - area_inter
+    # area_inter = torch.histc(intersection.cpu(), bins=nbins, min=mini, max=maxi)
+    # area_pred = torch.histc(predict.cpu(), bins=nbins, min=mini, max=maxi)
+    # area_lab = torch.histc(target.cpu(), bins=nbins, min=mini, max=maxi)
+    # area_union = area_pred + area_lab - area_inter
     assert (
         torch.sum(area_inter > area_union).item() == 0
     ), "Intersection area should be smaller than Union area"
     return area_inter.float(), area_union.float()
+    
 
 
 def pixelAccuracy(imPred, imLab):
