@@ -15,25 +15,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-
-
-def make_one_hot(input, num_classes):
-    """Convert class index tensor to one hot encoding tensor.
-
-    Args:
-         input: A tensor of shape [N, 1, *]
-         num_classes: An int of number of class
-    Returns:
-        A tensor of shape [N, num_classes, *]
-    """
-    shape = np.array(input.shape)
-    shape[1] = num_classes
-    shape = tuple(shape)
-    result = torch.zeros(shape)
-    result = result.scatter_(1, input.cpu(), 1)
-
-    return result
 
 
 class BinaryDiceLoss(nn.Module):
@@ -110,30 +91,22 @@ class DiceLoss(nn.Module):
                 if self.weight is not None:
                     assert (
                         self.weight.shape[0] == target.shape[1]
-                    ), "Expect weight shape [{}], get[{}]".format(
-                        target.shape[1], self.weight.shape[0]
-                    )
+                    ), f"Expect weight shape [{target.shape[1]}], get[{self.weight.shape[0]}]"
+
                     dice_loss *= self.weights[i]
                 total_loss += dice_loss
 
         return total_loss / target.shape[1]
 
 
-class DiceLoss2(torch.nn.Module):
-    def __init__(self):
-        super(DiceLoss, self).__init__()
-        self.smooth = 1.0
-
-    def forward(self, y_pred, y_true):
-        assert y_pred.size() == y_true.size()
-        y_pred = y_pred[:, 0].contiguous().view(-1)
-        y_true = y_true[:, 0].contiguous().view(-1)
-        intersection = (y_pred * y_true).sum()
-        dsc = (2.0 * intersection + self.smooth) / (
-            y_pred.sum() + y_true.sum() + self.smooth
-        )
-        return 1.0 - dsc
-
-
 if __name__ == "__main__":
-    pass
+    torch.manual_seed(1)
+
+    output = torch.rand(32, 3, 240, 160)
+    labels = torch.rand(32, 3, 240, 160)
+
+    loss_fn1 = DiceLoss()
+    loss_fn2 = BinaryDiceLoss()
+
+    print(loss_fn1(output, labels))
+    print(loss_fn2(output, labels))

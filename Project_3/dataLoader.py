@@ -32,7 +32,9 @@ IMG_SIZE = config.IMG_SIZE
 
 
 class ISICDataset(torch.utils.data.Dataset):
-    def __init__(self, transform = None, data_path="/dtu/datasets1/02514/isic/train_allstyles"):
+    def __init__(
+        self, transform=None, data_path="/dtu/datasets1/02514/isic/train_allstyles"
+    ):
 
         self.image_paths = glob.glob(f"{data_path}/Images/*.jpg")
         self.mask_paths = glob.glob(f"{data_path}/Segmentations/*.png")
@@ -45,8 +47,18 @@ class ISICDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         "Generates one sample of data"
-        image_path = self.image_paths[idx]
         mask_path = self.mask_paths[idx]
+
+        try:
+            image_path = self.image_paths[idx]
+        except IndexError:
+            search_string = mask_path.split("_seg")[0]
+            for i, path in enumerate(self.image_paths):
+                if search_string in path:
+                    idx = i
+                    break
+
+            image_path = self.image_paths[idx]
 
         image = np.array(Image.open(image_path))
         mask = np.array(Image.open(mask_path))

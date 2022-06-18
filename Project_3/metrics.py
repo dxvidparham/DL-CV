@@ -14,6 +14,7 @@
 ######################################################################
 import torch
 import numpy as np
+import torch.nn.functional as F
 
 __all__ = [
     "SegmentationMetric",
@@ -29,14 +30,13 @@ __all__ = [
 class SegmentationMetric(object):
     """Computes pixAcc and mIoU metric scores"""
 
-    def __init__(self, nclass):
+    def __init__(self, nclass=2):
         super(SegmentationMetric, self).__init__()
         self.nclass = nclass
         self.reset()
 
     def update(self, preds, labels):
         """Updates the internal evaluation result.
-
         Parameters
         ----------
         labels : 'NumpyArray' or list of `NumpyArray`
@@ -47,7 +47,7 @@ class SegmentationMetric(object):
 
         def evaluate_worker(self, pred, label):
             correct, labeled = batch_pix_accuracy(pred, label)
-            inter, union = batch_intersection_union(pred, label, self.nclass)
+            inter, union = intersection_union(pred, label)
 
             self.total_correct += correct
             self.total_label += labeled
@@ -65,7 +65,6 @@ class SegmentationMetric(object):
 
     def get(self):
         """Gets the current evaluation result.
-
         Returns
         -------
         metrics : tuple of float
@@ -120,6 +119,20 @@ def batch_intersection_union(output, target, nclass):
         torch.sum(area_inter > area_union).item() == 0
     ), "Intersection area should be smaller than Union area"
     return area_inter.float(), area_union.float()
+
+def intersection_union(output, target):
+  
+    if torch.is_tensor(output):
+        pred = torch.sigmoid(output).data.cpu().numpy()
+    if torch.is_tensor(target):
+        target = target.data.cpu().numpy()
+    output_ = pred > 0.5
+    target_ = target > 0.5
+
+    sum_inter = (output_ & target_).sum()
+    sum_union = (output_ | target_).sum()
+
+    return torch.tensor(sum_inter), torch.tensor(sum_union)
 
 
 def pixelAccuracy(imPred, imLab):
@@ -189,6 +202,33 @@ def compute_score(hist, correct, labeled):
     mean_pixel_acc = correct / labeled
 
     return iu, mean_IU, mean_IU_no_back, mean_pixel_acc
+
+
+def iou_score(output, target):
+    smooth = 1e-5
+
+    if torch.is_tensor(output):
+        output = torch.sigmoid(output).data.cpu().numpy()
+    if torch.is_tensor(target):
+        target = target.data.cpu().numpy()
+    output_ = output > 0.5
+    target_ = target > 0.5
+    intersection = (output_ & target_).sum()
+    union = (output_ | target_).sum()
+
+    return (intersection + smooth) / (union + smooth)
+
+
+
+
+def dice_coef(output, target):
+    smooth = 1e-5
+
+    output = torch.sigmoid(output).view(-1).data.cpu().numpy()
+    target = target.view(-1).data.cpu().numpy()
+    intersection = (output * target).sum()
+
+    return (2.0 * intersection + smooth) / (output.sum() + target.sum() + smooth)
 
 
 if __name__ == "__main__":

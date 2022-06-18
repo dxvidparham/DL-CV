@@ -1,17 +1,20 @@
 #config.yaml
 
-EPOCHS: 100
+EPOCHS: 20
 BATCH_SIZE: 32
-LEARNING_RATE: 1e-4
+LEARNING_RATE: 1e-6
 
 N_WORKERS: 4
 
 BEST_MODEL_PATH: "checkpoints/best_model.pth"
 CHECKPOINT_PATH: "checkpoints/"
-
+DATASET_PATH: "/dtu/datasets1/02514/isic/"
+## Choose between train_style0, train_style1, train_style2 or train_allstyles
+TRAIN_STYLE: "train_style0"
+TEST_SET: "test_style0"
 IMG_SIZE: [240, 160]
 
 ## Choose between FCN, UNet, UNet++
-ARCHITECTURE: "unet"
+ARCHITECTURE: "resnet101"
 
 PIN_MEMORY: True
