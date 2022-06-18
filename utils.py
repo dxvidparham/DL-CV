@@ -90,42 +90,52 @@ def unique_file(basename, ext):
     return actualname
 
 
-def visualize_results_(images, predicted, label):
-    # print(f"Image: {images.shape} {type(images)} {len(images)}, predicted: {predicted.shape} {type(predicted)}, GT: {label.shape} {type(label)}")
-    plt.figure(figsize=(20,20))
-    subplots = [plt.subplot(1,len(images), k+1) for k in range(len(images))]
+# def visualize_results_(images, predicted, label):
+#     # print(f"Image: {images.shape} {type(images)} {len(images)}, predicted: {predicted.shape} {type(predicted)}, GT: {label.shape} {type(label)}")
+#     plt.figure(figsize=(20,20))
+#     subplots = [plt.subplot(1,len(images), k+1) for k in range(len(images))]
     
-    for k, (img, pred, gt) in enumerate(zip(images, predicted, label)):
-        # print(f"Image: {img.shape} {type(img)}, predicted: {pred.shape} {type(pred)}, GT: {gt.shape} {type(gt)}")
-        print(f"image {k} added to plot")
-        img = (img.permute(1, 2, 0) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-        pred = pred.permute(1, 2, 0).clamp(0, 255).to(torch.uint8).cpu().numpy()
-        pred_mask = ma.masked_array(pred > 0, pred)
-        gt = gt.permute(1, 2, 0).clamp(0, 255).to(torch.uint8).cpu().numpy()
-        gt_mask = ma.masked_array(gt > 0, gt)
-        subplots[k].imshow(img.cpu().numpy())
-        subplots[k].imshow(pred_mask, "hot", alpha=0.2)
-        subplots[k].imshow(gt_mask, "jet", alpha=0.2)
-        subplots[k].axis('off')
-    plt.savefig(unique_file("out/images/test_result","png"),bbox_inches = "tight")
-    print("saved_file")
+#     for k, (img, pred, gt) in enumerate(zip(images, predicted, label)):
+#         # print(f"Image: {img.shape} {type(img)}, predicted: {pred.shape} {type(pred)}, GT: {gt.shape} {type(gt)}")
+#         print(f"image {k} added to plot")
+#         img = (img.permute(1, 2, 0) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+#         pred = pred.permute(1, 2, 0).clamp(0, 255).to(torch.uint8).cpu().numpy()
+#         pred_mask = ma.masked_array(pred > 0, pred)
+#         gt = gt.permute(1, 2, 0).clamp(0, 255).to(torch.uint8).cpu().numpy()
+#         gt_mask = ma.masked_array(gt > 0, gt)
+#         subplots[k].imshow(img.cpu().numpy())
+#         subplots[k].imshow(pred_mask, "hot", alpha=0.2)
+#         subplots[k].imshow(gt_mask, "jet", alpha=0.2)
+#         subplots[k].axis('off')
+#     plt.savefig(unique_file("out/images/test_result","png"),bbox_inches = "tight")
+#     print("saved_file")
 
 
 def visualize_results(images, predicted, label):
     # print(f"Image: {images.shape} {type(images)} {len(images)}, predicted: {predicted.shape} {type(predicted)}, GT: {label.shape} {type(label)}") 
     for k, (img, pred, gt) in enumerate(zip(images, predicted, label)):
-        # print(f"Image: {img.shape} {type(img)}, predicted: {pred.shape} {type(pred)}, GT: {gt.shape} {type(gt)}")
+        # print(f"Image: {img} {type(img)}, predicted: {pred} {type(pred)}, GT: {gt} {type(gt)}")
         plt.figure(figsize=(10,10))
+        subplots = [plt.subplot(1,3, k+1) for k in range(3)]
         print(f"image {k} added to plot")
         img = (img.permute(1, 2, 0) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-        pred = pred.permute(1, 2, 0).clamp(0, 255).to(torch.uint8).cpu().numpy()
-        pred_mask = ma.masked_array(pred > 0, pred)
-        gt = gt.permute(1, 2, 0).clamp(0, 255).to(torch.uint8).cpu().numpy()
-        gt_mask = ma.masked_array(gt > 0, gt)
-        plt.imshow(img.cpu().numpy())
-        plt.imshow(gt_mask, "hot", alpha=0.3)
-        plt.savefig(unique_file("out/images/test_result_pred","png"),bbox_inches = "tight")
-        plt.imshow(pred_mask, "jet", alpha=0.3)
-        plt.axis('off')
+        pred = pred.permute(1, 2, 0).to(torch.uint8).cpu().numpy()
+        pred_mask = np.zeros_like(pred)
+        mask = pred>0.5
+        pred_mask[mask] = 1
+        # print(f"pred_mask: {pred_mask.shape}")
+        gt = gt.permute(1, 2, 0).to(torch.uint8).cpu().numpy()
+        # print(f"gt: {gt}")
+        # gt_mask = np.zeros_like(pred)[gt>0.5]=1
+        subplots[0].imshow(img.cpu().numpy())
+        subplots[0].axis('off')
+        subplots[0].set_title('Test image')
+        subplots[1].imshow(gt, "gnuplot")
+        subplots[1].axis('off')
+        subplots[1].set_title('Ground truth')
+        # plt.savefig(unique_file("out/images/test_result_gt","png"),bbox_inches = "tight")
+        subplots[2].imshow(pred_mask, "turbo")
+        subplots[2].axis('off')
+        subplots[2].set_title('Predicted')
         plt.savefig(unique_file("out/images/test_result_all","png"),bbox_inches = "tight")
     print("saved_file")
