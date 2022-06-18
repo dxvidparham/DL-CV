@@ -16,6 +16,7 @@ import os
 import time
 
 import albumentations as A
+import click
 import numpy as np
 import torch
 import wandb
@@ -25,11 +26,8 @@ from torch import nn, optim
 from tqdm import tqdm
 
 from dataLoader import ISICDataset
+from metrics import SegmentationMetric
 from utils import EarlyStopping, get_model, print_statistics, save_model
-from metrics import SegmentationMetric, iou_score, dice_coef
-from operator import add
-import click
-import loss as semantic_losses
 
 # set flags / seeds to speed up the training process
 np.random.seed(1)
@@ -94,8 +92,8 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
     best_test_loss = 100000000
     early_stopping = EarlyStopping(tolerance=5, min_delta=10)
 
-    train_metrics = SegmentationMetric(1)
-    test_metrics = SegmentationMetric(1)
+    train_metrics = SegmentationMetric()
+    test_metrics = SegmentationMetric()
 
     for epoch in tqdm(range(EPOCHS), unit="epoch"):
         ######################
@@ -104,7 +102,6 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
         model.train()
 
         losses = []
-        total, pixAcc, mIoU = (0, 0, 0)
         train_metrics.reset()
 
         for images, labels in tqdm(trainloader, total=len(trainloader)):
@@ -122,19 +119,17 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
             scaler.update()
 
             losses.append(loss.item())
-            total += len(labels)
+            train_metrics.update(torch.sigmoid(output), labels)
 
-            train_metrics.update(output[0], labels)
-            pixAcc, mIoU = map(add, *((pixAcc, mIoU), train_metrics.get()))
-
-        len_losses = len(losses)
-        train_loss = sum(losses) / len_losses
-        train_pixAcc = 100 * (pixAcc / len_losses)
-        train_mIoU = 100 * (mIoU / len_losses)
+        train_loss = sum(losses) / len(losses)
+        train_mIoU, train_pixAcc = [
+            100 * np.mean(metric) for metric in train_metrics.get()
+        ]
 
         # Log train loss and acc
         wandb.log({"train_loss": train_loss})
         wandb.log({"train_pixAcc": train_pixAcc})
+        wandb.log({"train_mIoU": train_mIoU})
 
         print_statistics(train_loss, train_pixAcc, train_mIoU, epoch, EPOCHS)
 
@@ -145,7 +140,6 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
         with torch.no_grad():
 
             losses = []
-            total, pixAcc, mIoU = (0, 0, 0)
             test_metrics.reset()
 
             for images, labels in testloader:
@@ -158,19 +152,17 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
                     loss = loss_fn(output, labels)
 
                 losses.append(loss.item())
-                total += len(labels)
+                test_metrics.update(torch.sigmoid(output), labels)
 
-                test_metrics.update(output[0], labels)
-                pixAcc, mIoU = map(add, *((pixAcc, mIoU), test_metrics.get()))
-
-        len_losses = len(losses)
-        test_loss = sum(losses) / len_losses
-        test_pixAcc = 100 * (pixAcc / len_losses)
-        test_mIoU = 100 * (mIoU / len_losses)
+        test_loss = sum(losses) / len(losses)
+        test_mIoU, test_pixAcc = [
+            100 * np.mean(metric) for metric in test_metrics.get()
+        ]
 
         # Log train loss and acc
         wandb.log({"test_loss": test_loss})
         wandb.log({"test_pixAcc": test_pixAcc})
+        wandb.log({"test_mIoU": test_mIoU})
 
         print_statistics(test_loss, test_pixAcc, test_mIoU, Training=False)
 

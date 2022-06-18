@@ -15,8 +15,6 @@
 import glob
 import os
 
-import albumentations
-import albumentations.pytorch
 import numpy as np
 import PIL.Image as Image
 import torch
@@ -39,7 +37,10 @@ class ISICDataset(torch.utils.data.Dataset):
         self.image_paths = glob.glob(f"{data_path}/Images/*.jpg")
         self.mask_paths = glob.glob(f"{data_path}/Segmentations/*.png")
         self.transform = transform
-        self.classes = ["background", "foreground"]
+
+        self.search_img_dict = {
+            path.split(".jgp")[0]: path for path in self.image_paths
+        }
 
     def __len__(self):
         "Returns the total number of samples"
@@ -53,12 +54,7 @@ class ISICDataset(torch.utils.data.Dataset):
             image_path = self.image_paths[idx]
         except IndexError:
             search_string = mask_path.split("_seg")[0]
-            for i, path in enumerate(self.image_paths):
-                if search_string in path:
-                    idx = i
-                    break
-
-            image_path = self.image_paths[idx]
+            image_path = self.search_img_dict.get(search_string)
 
         image = np.array(Image.open(image_path))
         mask = np.array(Image.open(mask_path))

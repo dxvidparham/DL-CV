@@ -142,3 +142,6 @@ dmypy.json
 /Project_1_1/data/**
 /Project_1_2/data/**
 checkpoints/**
+
+poetry.lock
+pyproject.toml
