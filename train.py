@@ -55,6 +55,7 @@ IMG_SIZE = config.IMG_SIZE
 PIN_MEMORY = config.PIN_MEMORY
 DATASET_PATH = config.DATASET_PATH
 TRAIN_STYLE = config.TRAIN_STYLE
+TEST_SET = config.TEST_SET
 
 
 def train(trainloader, testloader, disable_wandb, scaler) -> None:
@@ -240,7 +241,7 @@ def main():
 
     print("[INFO] Load datasets from disk...")
     training_set = ISICDataset(train_transform, DATASET_PATH+TRAIN_STYLE)
-    testing_set = ISICDataset(test_transforms, DATASET_PATH+TRAIN_STYLE)
+    testing_set = ISICDataset(test_transforms, DATASET_PATH+TEST_SET)
 
     print("[INFO] Prepare dataloaders...")
     trainloader = torch.utils.data.DataLoader(
