@@ -14,6 +14,7 @@
 ######################################################################
 import torch
 import numpy as np
+import torch.nn.functional as F
 
 __all__ = [
     "SegmentationMetric",
@@ -47,7 +48,7 @@ class SegmentationMetric(object):
 
         def evaluate_worker(self, pred, label):
             correct, labeled = batch_pix_accuracy(pred, label)
-            inter, union = batch_intersection_union(pred, label, self.nclass)
+            inter, union = intersection_union(pred, label)
 
             self.total_correct += correct
             self.total_label += labeled
@@ -120,6 +121,20 @@ def batch_intersection_union(output, target, nclass):
         torch.sum(area_inter > area_union).item() == 0
     ), "Intersection area should be smaller than Union area"
     return area_inter.float(), area_union.float()
+
+def intersection_union(output, target):
+  
+    if torch.is_tensor(output):
+        pred = torch.sigmoid(output).data.cpu().numpy()
+    if torch.is_tensor(target):
+        target = target.data.cpu().numpy()
+    output_ = pred > 0.5
+    target_ = target > 0.5
+
+    sum_inter = (output_ & target_).sum()
+    sum_union = (output_ | target_).sum()
+
+    return torch.tensor(sum_inter), torch.tensor(sum_union)
 
 
 def pixelAccuracy(imPred, imLab):
@@ -204,6 +219,8 @@ def iou_score(output, target):
     union = (output_ | target_).sum()
 
     return (intersection + smooth) / (union + smooth)
+
+
 
 
 def dice_coef(output, target):

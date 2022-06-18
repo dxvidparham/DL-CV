@@ -33,7 +33,7 @@ resnet101.classifier[4] = nn.Conv2d(in_channels=resnet101.classifier[4].in_chann
 #%%
 if __name__ == "__main___":
     model = resnet101
-    IMG_SIZE = [240, 160]  # [240, 160] , [64,64]
+    IMG_SIZE = [240, 160] 
 
 
     train_transform = A.Compose(

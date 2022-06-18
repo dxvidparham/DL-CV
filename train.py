@@ -68,7 +68,7 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
 
     print(f"[INFO] Initializing model architecture -> {ARCHITECTURE}...")
     # Choose between FCN, UNet, UNet++, resnet101
-    model = get_model(ARCHITECTURE)
+    model = get_model(ARCHITECTURE)  # changed function to return model not class
 
     # Push model to GPU if available
     if torch.cuda.is_available():
