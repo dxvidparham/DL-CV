@@ -19,13 +19,14 @@ import albumentations as A
 import numpy as np
 import torch
 import wandb
+import matplotlib.pyplot as plt
 from albumentations.pytorch import ToTensorV2
 from omegaconf import OmegaConf
 from torch import nn, optim
 from tqdm import tqdm
 
 from dataLoader import ISICDataset
-from utils import EarlyStopping, get_model, print_statistics, save_model
+from utils import EarlyStopping, get_model, print_statistics, save_model, visualize_results
 from metrics import SegmentationMetric
 from operator import add
 
@@ -52,6 +53,8 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 ARCHITECTURE = config.ARCHITECTURE
 IMG_SIZE = config.IMG_SIZE
 PIN_MEMORY = config.PIN_MEMORY
+DATASET_PATH = config.DATASET_PATH
+TRAIN_STYLE = config.TRAIN_STYLE
 
 
 def train(trainloader, testloader, disable_wandb, scaler) -> None:
@@ -145,7 +148,6 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
             losses = []
             correct = 0
             total = 0
-
             for images, labels in testloader:
 
                 images = images.float().to(DEVICE)
@@ -161,6 +163,11 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
                 predicted = torch.sigmoid(output)
                 predicted = (predicted > 0.5).float()
                 correct = (predicted == labels).sum()
+                
+                    
+                if epoch == EPOCHS-1:
+                    visualize_results(images, predicted, labels)
+                
 
         test_loss = sum(losses) / max(1, len(losses))
         test_acc = 100 * correct // total
@@ -232,7 +239,7 @@ def main():
     config.pop("IMG_SIZE")
 
     print("[INFO] Load datasets from disk...")
-    training_set = ISICDataset(train_transform)
+    training_set = ISICDataset(train_transform, DATASET_PATH+TRAIN_STYLE)
     testing_set = ISICDataset(test_transforms)
 
     print("[INFO] Prepare dataloaders...")
