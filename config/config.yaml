@@ -11,6 +11,7 @@ CHECKPOINT_PATH: "checkpoints/"
 DATASET_PATH: "/dtu/datasets1/02514/isic/"
 ## Choose between train_style0, train_style1, train_style2 or train_allstyles
 TRAIN_STYLE: "train_style0"
+TEST_SET: "test_style0"
 IMG_SIZE: [240, 160]
 
 ## Choose between FCN, UNet, UNet++
