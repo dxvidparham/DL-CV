@@ -19,16 +19,17 @@ import albumentations as A
 import numpy as np
 import torch
 import wandb
-import matplotlib.pyplot as plt
 from albumentations.pytorch import ToTensorV2
 from omegaconf import OmegaConf
 from torch import nn, optim
 from tqdm import tqdm
 
 from dataLoader import ISICDataset
-from utils import EarlyStopping, get_model, print_statistics, save_model, visualize_results
-from metrics import SegmentationMetric
+from utils import EarlyStopping, get_model, print_statistics, save_model
+from metrics import SegmentationMetric, iou_score, dice_coef
 from operator import add
+import click
+import loss as semantic_losses
 
 # set flags / seeds to speed up the training process
 np.random.seed(1)
@@ -53,9 +54,6 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 ARCHITECTURE = config.ARCHITECTURE
 IMG_SIZE = config.IMG_SIZE
 PIN_MEMORY = config.PIN_MEMORY
-DATASET_PATH = config.DATASET_PATH
-TRAIN_STYLE = config.TRAIN_STYLE
-TEST_SET = config.TEST_SET
 
 
 def train(trainloader, testloader, disable_wandb, scaler) -> None:
@@ -82,6 +80,7 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
 
     # Choose cross_entropy for multi_class classification
     loss_fn = nn.BCEWithLogitsLoss()
+
     optimizer = optim.AdamW(
         model.parameters(), lr=LEARNING_RATE, weight_decay=LEARNING_RATE / EPOCHS
     )
@@ -95,7 +94,8 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
     best_test_loss = 100000000
     early_stopping = EarlyStopping(tolerance=5, min_delta=10)
 
-    metrics = SegmentationMetric(1)
+    train_metrics = SegmentationMetric(1)
+    test_metrics = SegmentationMetric(1)
 
     for epoch in tqdm(range(EPOCHS), unit="epoch"):
         ######################
@@ -104,11 +104,8 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
         model.train()
 
         losses = []
-        correct = 0
-        total = 0
-        pixAcc = 0
-        mIoU = 0
-        metrics.reset()
+        total, pixAcc, mIoU = (0, 0, 0)
+        train_metrics.reset()
 
         for images, labels in tqdm(trainloader, total=len(trainloader)):
 
@@ -127,12 +124,13 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
             losses.append(loss.item())
             total += len(labels)
 
-            metrics.update(output[0], labels)
-            pixAcc, mIoU = map(add, *((pixAcc, mIoU), metrics.get()))
+            train_metrics.update(output[0], labels)
+            pixAcc, mIoU = map(add, *((pixAcc, mIoU), train_metrics.get()))
 
-        train_loss = sum(losses) / max(1, len(losses))
-        train_pixAcc = 100 * (pixAcc / max(1, len(losses)))
-        train_mIoU = 100 * (mIoU / max(1, len(losses)))
+        len_losses = len(losses)
+        train_loss = sum(losses) / len_losses
+        train_pixAcc = 100 * (pixAcc / len_losses)
+        train_mIoU = 100 * (mIoU / len_losses)
 
         # Log train loss and acc
         wandb.log({"train_loss": train_loss})
@@ -147,8 +145,9 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
         with torch.no_grad():
 
             losses = []
-            correct = 0
-            total = 0
+            total, pixAcc, mIoU = (0, 0, 0)
+            test_metrics.reset()
+
             for images, labels in testloader:
 
                 images = images.float().to(DEVICE)
@@ -161,23 +160,19 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
                 losses.append(loss.item())
                 total += len(labels)
 
-                predicted = torch.sigmoid(output)
-                predicted = (predicted > 0.5).float()
-                correct = (predicted == labels).sum()
-                
-                    
-                if epoch == EPOCHS-1:
-                    visualize_results(images, predicted, labels)
-                
+                test_metrics.update(output[0], labels)
+                pixAcc, mIoU = map(add, *((pixAcc, mIoU), test_metrics.get()))
 
-        test_loss = sum(losses) / max(1, len(losses))
-        test_acc = 100 * correct // total
+        len_losses = len(losses)
+        test_loss = sum(losses) / len_losses
+        test_pixAcc = 100 * (pixAcc / len_losses)
+        test_mIoU = 100 * (mIoU / len_losses)
 
         # Log train loss and acc
         wandb.log({"test_loss": test_loss})
-        wandb.log({"test_acc": test_acc})
+        wandb.log({"test_pixAcc": test_pixAcc})
 
-        print_statistics(train_loss, train_pixAcc, train_mIoU, Training=False)
+        print_statistics(test_loss, test_pixAcc, test_mIoU, Training=False)
 
         # Evaluation loop end
 
@@ -208,7 +203,11 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
     )
 
 
-def main():
+@click.command()
+@click.option(
+    "--wandb", is_flag=True, default=False, help="Use this flag to enable wandb"
+)
+def main(wandb):
 
     train_transform = A.Compose(
         [
@@ -240,8 +239,8 @@ def main():
     config.pop("IMG_SIZE")
 
     print("[INFO] Load datasets from disk...")
-    training_set = ISICDataset(train_transform, DATASET_PATH+TRAIN_STYLE)
-    testing_set = ISICDataset(test_transforms, DATASET_PATH+TEST_SET)
+    training_set = ISICDataset(train_transform)
+    testing_set = ISICDataset(test_transforms)
 
     print("[INFO] Prepare dataloaders...")
     trainloader = torch.utils.data.DataLoader(
@@ -260,7 +259,7 @@ def main():
     )
 
     scaler = torch.cuda.amp.GradScaler()
-    train(trainloader, testloader, disable_wandb=True, scaler=scaler)
+    train(trainloader, testloader, disable_wandb=not wandb, scaler=scaler)
 
 
 if __name__ == "__main__":

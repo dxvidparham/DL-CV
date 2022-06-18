@@ -13,7 +13,6 @@
 # for semantic segmentation
 ######################################################################
 import torch
-import torch.nn.functional as F
 import numpy as np
 
 __all__ = [
@@ -30,7 +29,7 @@ __all__ = [
 class SegmentationMetric(object):
     """Computes pixAcc and mIoU metric scores"""
 
-    def __init__(self, nclass):
+    def __init__(self, nclass=2):
         super(SegmentationMetric, self).__init__()
         self.nclass = nclass
         self.reset()
@@ -106,30 +105,21 @@ def batch_intersection_union(output, target, nclass):
     mini = 1
     maxi = nclass
     nbins = nclass
+    predict = torch.argmax(output, 1) + 1
+    target = target.float() + 1
 
-    predict = (F.sigmoid(output) > 0.5).float()
-    target = target.float()
-
-    # predict = predict.float() * (target > 0).float()
-    intersection = (predict == target).float()
-    
-    area_pred = predict.sum()
-    area_lab = target.sum()
-    area_inter = intersection.sum()
-
-    area_union = area_pred + area_lab - area_inter
-
+    predict = predict.float() * (target > 0).float()
+    intersection = predict * (predict == target).float()
     # areas of intersection and union
     # element 0 in intersection occur the main difference from np.bincount. set boundary to -1 is necessary.
-    # area_inter = torch.histc(intersection.cpu(), bins=nbins, min=mini, max=maxi)
-    # area_pred = torch.histc(predict.cpu(), bins=nbins, min=mini, max=maxi)
-    # area_lab = torch.histc(target.cpu(), bins=nbins, min=mini, max=maxi)
-    # area_union = area_pred + area_lab - area_inter
+    area_inter = torch.histc(intersection.cpu(), bins=nbins, min=mini, max=maxi)
+    area_pred = torch.histc(predict.cpu(), bins=nbins, min=mini, max=maxi)
+    area_lab = torch.histc(target.cpu(), bins=nbins, min=mini, max=maxi)
+    area_union = area_pred + area_lab - area_inter
     assert (
         torch.sum(area_inter > area_union).item() == 0
     ), "Intersection area should be smaller than Union area"
     return area_inter.float(), area_union.float()
-    
 
 
 def pixelAccuracy(imPred, imLab):
@@ -199,6 +189,32 @@ def compute_score(hist, correct, labeled):
     mean_pixel_acc = correct / labeled
 
     return iu, mean_IU, mean_IU_no_back, mean_pixel_acc
+
+
+
+def iou_score(output, target):
+    smooth = 1e-5
+
+    if torch.is_tensor(output):
+        output = torch.sigmoid(output).data.cpu().numpy()
+    if torch.is_tensor(target):
+        target = target.data.cpu().numpy()
+    output_ = output > 0.5
+    target_ = target > 0.5
+    intersection = (output_ & target_).sum()
+    union = (output_ | target_).sum()
+
+    return (intersection + smooth) / (union + smooth)
+
+
+def dice_coef(output, target):
+    smooth = 1e-5
+
+    output = torch.sigmoid(output).view(-1).data.cpu().numpy()
+    target = target.view(-1).data.cpu().numpy()
+    intersection = (output * target).sum()
+
+    return (2.0 * intersection + smooth) / (output.sum() + target.sum() + smooth)
 
 
 if __name__ == "__main__":
