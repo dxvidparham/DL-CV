@@ -11,14 +11,15 @@ from dataLoader import ISICDataset
 
 
 #%% Network
-resnet101 = torchvision.models.segmentation.fcn_resnet101(pretrained=True)
+def load_resnet():
+    resnet101 = torchvision.models.segmentation.fcn_resnet101(pretrained=True)
 
-resnet101.classifier[4] = nn.Conv2d(in_channels=resnet101.classifier[4].in_channels,
-                                    out_channels= 1,
-                                    kernel_size=resnet101.classifier[4].kernel_size,
-                                    stride=resnet101.classifier[4].stride)
+    resnet101.classifier[4] = nn.Conv2d(in_channels=resnet101.classifier[4].in_channels,
+                                        out_channels= 1,
+                                        kernel_size=resnet101.classifier[4].kernel_size,
+                                        stride=resnet101.classifier[4].stride)
 
-
+    return resnet101
 
 
 #%%

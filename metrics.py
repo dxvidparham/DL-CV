@@ -15,6 +15,7 @@
 
 import numpy as np
 from torchmetrics.functional import accuracy, jaccard_index
+import torch
 
 
 class SegmentationMetric(object):
@@ -40,6 +41,20 @@ class SegmentationMetric(object):
     def reset(self):
         self.IoU = []
         self.pixAcc = []
+
+    def compare_size(output, target):
+        if torch.is_tensor(output):
+            pred = torch.sigmoid(output).data.cpu().numpy()
+        if torch.is_tensor(target):
+            target = target.data.cpu().numpy()
+        output_ = pred > 0.5
+        target_ = target > 0.5
+
+        sum_out = output_.sum()
+        sum_target = target_.sum()
+
+        return torch.tensor(sum_out), torch.tensor(sum_target) 
+    
 
 if __name__ == "__main__":
     pass
