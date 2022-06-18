@@ -8,10 +8,10 @@ import matplotlib.pyplot as plt
 
 outdir = "out"
 
-V1 = "./out/latents/projected_w_alex.npz"
+V1 = "./out/latents/chris.npz"
 V2 = "./out/latents/projected_w_karol2.npz"
 
-v1_type = "Alex"
+v1_type = "Chris"
 v2_type = "Karol"
 
 
