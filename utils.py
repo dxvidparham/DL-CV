@@ -48,7 +48,7 @@ def get_model(model_name):
     elif model_name == "fcn":
         return FCN.FCN()
     elif model_name == "resnet101":
-        return resnet101.resnet101
+        return resnet101.load_resnet()
     else:
         print("Model with model name: {model_name} not found.")
         raise ValueError
