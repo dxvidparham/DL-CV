@@ -20,7 +20,7 @@ import itertools
 import numpy as np
 import numpy.ma as ma
 
-from architectures import FCN, NestedUNet, UNet
+from architectures import FCN, NestedUNet, UNet, resnet101
  
 
 class EarlyStopping:
@@ -39,13 +39,16 @@ class EarlyStopping:
 
 
 def get_model(model_name):
+    # changed to pass object not class
     model_name = model_name.lower()
     if model_name == "unet":
-        return UNet.UNet
+        return UNet.UNet()
     elif model_name == "unet++":
-        return NestedUNet.NestedUNet
+        return NestedUNet.NestedUNet()
     elif model_name == "fcn":
-        return FCN.FCN
+        return FCN.FCN()
+    elif model_name == "resnet101":
+        return resnet101.resnet101
     else:
         print("Model with model name: {model_name} not found.")
         raise ValueError
@@ -72,19 +75,12 @@ def print_statistics(loss, pixAcc, mIoU, epoch=0, epochs=0, Training=True):
     if Training:
         print(
             f"Epoch {epoch+1}/{epochs} \n \tTraining:  "
-<<<<<<< HEAD
             f" Loss={loss:.2f}\t pixAcc={pixAcc:.2f}%\t mIoU={mIoU:.2f}%\t"
         )
     else:
         print(
             f"\tTesting:    Loss={loss:.2f}\t pixAcc={pixAcc:.2f}%\t mIoU={mIoU:.2f}%\t"
         )
-=======
-            f" Loss={loss:.2f}\t pixAcc={pixAcc:.2f}%\t mIoU={mIoU:.3f}%\t"
-        )
-    else:
-        print(f"\tTesting: Loss={loss:.2f}\t pixAcc={pixAcc:.2f}%\t mIoU={mIoU:.3f}%\t")
->>>>>>> chris3
 
 
 if __name__ == "__main__":

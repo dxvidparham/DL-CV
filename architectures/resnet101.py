@@ -9,11 +9,16 @@ from albumentations.pytorch import ToTensorV2
 
 from dataLoader import ISICDataset
 
-IMG_SIZE = [64,64]
 
 #%% Network
+resnet101 = torchvision.models.segmentation.fcn_resnet101(pretrained=True)
 
-model = torchvision.models.segmentation.fcn_resnet101(pretrained=True)
+resnet101.classifier[4] = nn.Conv2d(in_channels=resnet101.classifier[4].in_channels,
+                                    out_channels= 1,
+                                    kernel_size=resnet101.classifier[4].kernel_size,
+                                    stride=resnet101.classifier[4].stride)
+
+
 
 
 #%%
@@ -26,10 +31,10 @@ model = torchvision.models.segmentation.fcn_resnet101(pretrained=True)
 # )
 
 #%%
-
 if __name__ == "__main___":
+    model = resnet101
+    IMG_SIZE = [240, 160]  # [240, 160] , [64,64]
 
-#%%
 
     train_transform = A.Compose(
             [
@@ -67,5 +72,5 @@ if __name__ == "__main___":
 
         output = model(images)
 
-        print(output)
+        print(output['out'].shape)
 # %%
