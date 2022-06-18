@@ -240,7 +240,7 @@ def main():
 
     print("[INFO] Load datasets from disk...")
     training_set = ISICDataset(train_transform, DATASET_PATH+TRAIN_STYLE)
-    testing_set = ISICDataset(test_transforms)
+    testing_set = ISICDataset(test_transforms, DATASET_PATH+TRAIN_STYLE)
 
     print("[INFO] Prepare dataloaders...")
     trainloader = torch.utils.data.DataLoader(

@@ -90,7 +90,7 @@ def unique_file(basename, ext):
     return actualname
 
 
-def visualize_results_(images, predicted, label):
+def visualize_results(images, predicted, label):
     # print(f"Image: {images.shape} {type(images)} {len(images)}, predicted: {predicted.shape} {type(predicted)}, GT: {label.shape} {type(label)}")
     plt.figure(figsize=(20,20))
     subplots = [plt.subplot(1,len(images), k+1) for k in range(len(images))]
@@ -109,7 +109,7 @@ def visualize_results_(images, predicted, label):
     print("saved_file")
 
 
-def visualize_results(images, predicted, label):
+def visualize_results_(images, predicted, label):
     # print(f"Image: {images.shape} {type(images)} {len(images)}, predicted: {predicted.shape} {type(predicted)}, GT: {label.shape} {type(label)}") 
     for k, (img, pred, gt) in enumerate(zip(images, predicted, label)):
         # print(f"Image: {img.shape} {type(img)}, predicted: {pred.shape} {type(pred)}, GT: {gt.shape} {type(gt)}")
