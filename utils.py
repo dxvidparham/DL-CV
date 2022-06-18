@@ -68,10 +68,12 @@ def print_statistics(loss, pixAcc, mIoU, epoch=0, epochs=0, Training=True):
     if Training:
         print(
             f"Epoch {epoch+1}/{epochs} \n \tTraining:  "
-            f" Loss={loss:.2f}\t pixAcc={pixAcc}%\t mIoU={mIoU}%\t"
+            f" Loss={loss:.2f}\t pixAcc={pixAcc:.2f}%\t mIoU={mIoU:.2f}%\t"
         )
     else:
-        print(f"\tTesting: Loss={loss:.2f}\t pixAcc={pixAcc}%\t mIoU={mIoU}%\t")
+        print(
+            f"\tTesting:    Loss={loss:.2f}\t pixAcc={pixAcc:.2f}%\t mIoU={mIoU:.2f}%\t"
+        )
 
 
 if __name__ == "__main__":

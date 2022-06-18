@@ -29,7 +29,7 @@ __all__ = [
 class SegmentationMetric(object):
     """Computes pixAcc and mIoU metric scores"""
 
-    def __init__(self, nclass):
+    def __init__(self, nclass=2):
         super(SegmentationMetric, self).__init__()
         self.nclass = nclass
         self.reset()
@@ -189,6 +189,31 @@ def compute_score(hist, correct, labeled):
     mean_pixel_acc = correct / labeled
 
     return iu, mean_IU, mean_IU_no_back, mean_pixel_acc
+
+
+def iou_score(output, target):
+    smooth = 1e-5
+
+    if torch.is_tensor(output):
+        output = torch.sigmoid(output).data.cpu().numpy()
+    if torch.is_tensor(target):
+        target = target.data.cpu().numpy()
+    output_ = output > 0.5
+    target_ = target > 0.5
+    intersection = (output_ & target_).sum()
+    union = (output_ | target_).sum()
+
+    return (intersection + smooth) / (union + smooth)
+
+
+def dice_coef(output, target):
+    smooth = 1e-5
+
+    output = torch.sigmoid(output).view(-1).data.cpu().numpy()
+    target = target.view(-1).data.cpu().numpy()
+    intersection = (output * target).sum()
+
+    return (2.0 * intersection + smooth) / (output.sum() + target.sum() + smooth)
 
 
 if __name__ == "__main__":

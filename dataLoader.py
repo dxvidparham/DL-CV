@@ -33,7 +33,7 @@ IMG_SIZE = config.IMG_SIZE
 
 class ISICDataset(torch.utils.data.Dataset):
     def __init__(
-        self, transform, data_path="/dtu/datasets1/02514/isic/train_allstyles"
+        self, transform=None, data_path="/dtu/datasets1/02514/isic/train_allstyles"
     ):
 
         self.image_paths = glob.glob(f"{data_path}/Images/*.jpg")
@@ -65,7 +65,7 @@ class ISICDataset(torch.utils.data.Dataset):
 if __name__ == "__main__":
 
     print("[INFO] Load datasets from disk...")
-    dataset = ISICDataset(augment=True)
+    dataset = ISICDataset()
 
     print("[INFO] Prepare dataloaders...")
     dataloader = torch.utils.data.DataLoader(
