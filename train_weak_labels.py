@@ -20,6 +20,7 @@ import numpy as np
 import torch
 import wandb
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
 from albumentations.pytorch import ToTensorV2
 from omegaconf import OmegaConf
 from torch import nn, optim
@@ -27,7 +28,7 @@ from tqdm import tqdm
 
 from dataLoader import ISICDataset
 from utils import EarlyStopping, get_model, print_statistics, save_model, visualize_results
-from metrics import SegmentationMetric
+from metrics import SegmentationMetric, intersectionAndUnion
 from operator import add
 
 # set flags / seeds to speed up the training process
@@ -56,6 +57,7 @@ PIN_MEMORY = config.PIN_MEMORY
 DATASET_PATH = config.DATASET_PATH
 TRAIN_STYLE = config.TRAIN_STYLE
 TEST_SET = config.TEST_SET
+ITER = config.ITER
 
 
 def train(trainloader, testloader, disable_wandb, scaler) -> None:
@@ -114,18 +116,25 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
 
             images = images.float().to(DEVICE)
             labels = labels.float().unsqueeze(1).to(DEVICE)
+            for iter in range(ITER):
+                with torch.cuda.amp.autocast():
+                    output = model(images)
+                    loss = loss_fn(output, labels)
 
-            with torch.cuda.amp.autocast():
-                output = model(images)
-                loss = loss_fn(output, labels)
+                optimizer.zero_grad(set_to_none=True)
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
 
-            optimizer.zero_grad(set_to_none=True)
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-
-            losses.append(loss.item())
-            total += len(labels)
+                losses.append(loss.item())
+                total += len(labels)
+                last_labels = labels
+                labels = (F.softmax(output)>0.5).float()*last_labels
+                intersection, union = intersectionAndUnion(labels, last_labels, 1)
+                if intersection/union < 0.5:
+                    labels = last_labels
+                
+                
 
             metrics.update(output[0], labels)
             pixAcc, mIoU = map(add, *((pixAcc, mIoU), metrics.get()))
