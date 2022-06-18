@@ -139,6 +139,7 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
         # Log train loss and acc
         wandb.log({"train_loss": train_loss})
         wandb.log({"train_pixAcc": train_pixAcc})
+        wandb.log({"train_mIoU": train_mIoU})
 
         print_statistics(train_loss, train_pixAcc, train_mIoU, epoch, EPOCHS)
 
@@ -177,6 +178,7 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
         # Log train loss and acc
         wandb.log({"test_loss": test_loss})
         wandb.log({"test_pixAcc": test_pixAcc})
+        wandb.log({"test_mIoU": test_mIoU})
 
         print_statistics(test_loss, test_pixAcc, test_mIoU, Training=False)
 
