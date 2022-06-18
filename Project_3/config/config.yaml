@@ -1,0 +1,17 @@
+#config.yaml
+
+EPOCHS: 100
+BATCH_SIZE: 32
+LEARNING_RATE: 1e-4
+
+N_WORKERS: 4
+
+BEST_MODEL_PATH: "checkpoints/best_model.pth"
+CHECKPOINT_PATH: "checkpoints/"
+
+IMG_SIZE: [240, 160]
+
+## Choose between FCN, UNet, UNet++
+ARCHITECTURE: "unet"
+
+PIN_MEMORY: True
