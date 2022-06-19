@@ -20,7 +20,7 @@ import itertools
 import numpy as np
 import numpy.ma as ma
 
-from architectures import FCN, NestedUNet, UNet, resnet101
+from architectures import FCN, NestedUNet, UNet, resnet101, grad_cam
 
 
 class EarlyStopping:
@@ -49,6 +49,8 @@ def get_model(model_name):
         return FCN.FCN()
     elif model_name == "resnet101":
         return resnet101.SegmentationModelOutputWrapper()
+    elif model_name == "grad_cam":
+        return grad_cam.VGG_seg()
     else:
         print("Model with model name: {model_name} not found.")
         raise ValueError
@@ -142,5 +144,19 @@ def visualize_results(images, predicted, label):
         subplots[2].imshow(pred_mask, "turbo")
         subplots[2].axis('off')
         subplots[2].set_title('Predicted')
+        plt.savefig(unique_file("out/images/test_result_all","png"),bbox_inches = "tight")
+    print("saved_file")
+
+
+def visualize_results_classification(images, predicted, label):
+    # print(f"Image: {images.shape} {type(images)} {len(images)}, predicted: {predicted.shape} {type(predicted)}, GT: {label.shape} {type(label)}")
+    for k, (img, pred, gt) in enumerate(zip(images, predicted, label)):
+        # print(f"Image: {img} {type(img)}, predicted: {pred} {type(pred)}, GT: {gt} {type(gt)}")
+        plt.figure(figsize=(10,10))
+        print(f"image {k} added to plot")
+        img = (img.permute(1, 2, 0) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+        plt.imshow(img.cpu().numpy())
+        plt.axis('off')
+        plt.title(f'Pred: {pred.item()}, GT: {gt.item()}')
         plt.savefig(unique_file("out/images/test_result_all","png"),bbox_inches = "tight")
     print("saved_file")

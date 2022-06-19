@@ -12,6 +12,7 @@
 # Module: <Purpose of the module>
 ######################################################################
 
+from cProfile import label
 import glob
 import os
 
@@ -71,6 +72,45 @@ class ISICDataset(torch.utils.data.Dataset):
         return image, mask
 
 
+class ClassifierDataset(torch.utils.data.Dataset):
+    def __init__(
+        self, transform=None, data_path="/dtu/datasets1/02514/isic"
+    ):
+        self.mask_paths = []
+        self.back_image_paths = sorted(glob.glob(f"{data_path}/background/*.jpg"))
+        self.fore_image_paths = sorted(glob.glob(f"{data_path}/train_allstyles/Images/*.jpg"))
+
+        test1 = {path:0 for path in self.back_image_paths}
+        test2 = {path:1 for path in self.fore_image_paths}
+
+        self.labels = list(test1.values())+list(test2.values())
+        self.image_paths = list(test1.keys())+list(test2.keys())
+
+        self.transform = transform
+
+
+    def __len__(self):
+        "Returns the total number of samples"
+        return len(self.image_paths)
+
+    def __getitem__(self, idx):
+        "Generates one sample of data"
+        target = self.labels[idx]
+
+       
+        image_path = self.image_paths[idx]
+        
+
+        image = np.array(Image.open(image_path))
+        
+
+        if self.transform is not None:
+            augmentations = self.transform(image=image)
+            image = augmentations["image"]
+
+        return image, target
+
+
 if __name__ == "__main__":
 
     print("[INFO] Load datasets from disk...")
@@ -85,5 +125,10 @@ if __name__ == "__main__":
     )
 
     dataloader_iter = iter(dataloader)
+    x, y = next(dataloader_iter)
+    print(x)
+
+    d =  ClassifierDataset()
+    dataloader_iter = iter(d)
     x, y = next(dataloader_iter)
     print(x)
