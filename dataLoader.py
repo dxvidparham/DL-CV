@@ -30,9 +30,7 @@ IMG_SIZE = config.IMG_SIZE
 
 
 class ISICDataset(torch.utils.data.Dataset):
-    def __init__(
-        self, transform=None, data_path="/dtu/datasets1/02514/isic/train_allstyles"
-    ):
+    def __init__(self, data_path, transform=None):
         self.mask_paths = []
         self.image_paths = sorted(glob.glob(f"{data_path}/Images/*.jpg"))
         for path in self.image_paths:
@@ -40,13 +38,9 @@ class ISICDataset(torch.utils.data.Dataset):
             self.mask_paths.append(
                 sorted(glob.glob(f"{data_path}/Segmentations/{file_name}*.png"))[0]
             )
-        if len(self.mask_paths) == len(self.image_paths):
-            print("dataset size correct")
-        self.transform = transform
+        assert len(self.mask_paths) == len(self.image_paths)
 
-        self.search_img_dict = {
-            path.split(".jgp")[0]: path for path in self.image_paths
-        }
+        self.transform = transform
 
     def __len__(self):
         "Returns the total number of samples"
@@ -55,12 +49,7 @@ class ISICDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         "Generates one sample of data"
         mask_path = self.mask_paths[idx]
-
-        try:
-            image_path = self.image_paths[idx]
-        except IndexError:
-            search_string = mask_path.split("_seg")[0]
-            image_path = self.search_img_dict.get(search_string)
+        image_path = self.image_paths[idx]
 
         image = np.array(Image.open(image_path))
         mask = np.array(Image.open(mask_path))

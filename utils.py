@@ -19,8 +19,12 @@ import matplotlib.pyplot as plt
 import itertools
 import numpy as np
 import numpy.ma as ma
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+from torch import nn, optim
 
-from architectures import FCN, NestedUNet, UNet, resnet101
+from architectures import NestedUNet, UNet, resnet101
+from loss import BinaryDiceLoss
 
 
 class EarlyStopping:
@@ -38,24 +42,77 @@ class EarlyStopping:
                 self.early_stop = True
 
 
-def get_model(model_name):
+class ImageTransformations:
+    def __init__(self, is_train, img_size):
+        self.is_train = is_train
+        self.img_size = img_size
+        self.augmentations = None
+
+        if self.is_train:
+            self.augmentations = A.Compose(
+                [
+                    A.Resize(*self.img_size),
+                    # A.Rotate(limit=35, p=1.0),
+                    # A.HorizontalFlip(p=0.5),
+                    # A.VerticalFlip(p=0.1),
+                    A.Normalize(
+                        mean=[0.0, 0.0, 0.0],
+                        std=[1.0, 1.0, 1.0],
+                        max_pixel_value=255.0,
+                    ),
+                    ToTensorV2(),
+                ],
+            )
+        else:
+            self.augmentations = A.Compose(
+                [
+                    A.Resize(*self.img_size),
+                    A.Normalize(
+                        mean=[0.0, 0.0, 0.0],
+                        std=[1.0, 1.0, 1.0],
+                        max_pixel_value=255.0,
+                    ),
+                    ToTensorV2(),
+                ],
+            )
+
+    def __names__(self):
+        transformation_lst = []
+        for transformation in self.augmentations:
+            transformation_lst.append(str(transformation).split("(")[0])
+        return transformation_lst
+
+
+def models(_name):
     # changed to pass object not class
-    model_name = model_name.lower()
-    if model_name == "unet":
-        return UNet.UNet()
-    elif model_name == "unet++":
-        return NestedUNet.NestedUNet()
-    elif model_name == "fcn":
-        return FCN.FCN()
-    elif model_name == "resnet101":
-<<<<<<< HEAD
-        return resnet101.SegmentationModelOutputWrapper()
-=======
-        return resnet101.load_resnet()
->>>>>>> 54dbc62d3d58ab1675265820744f47bc2a350d54
+    model_dct = {
+        "unet": UNet.UNet,
+        "unet++": NestedUNet.NestedUNet,
+        # "resnet101": resnet101.load_resnet,
+    }
+    if _name.lower() in model_dct:
+        return model_dct.get(_name.lower())
     else:
-        print("Model with model name: {model_name} not found.")
-        raise ValueError
+        raise ValueError(f"[ERROR] Model: '{_name}' hasn't been enabled.")
+
+
+def optimizers(_name):
+    optimizers = {"adam": optim.Adam, "sgd": optim.SGD}
+    if _name.lower() in optimizers:
+        return optimizers.get(_name.lower())
+    else:
+        raise ValueError(f"[ERROR] Optimizer: '{_name}' hasn't been enabled.")
+
+
+def loss_fns(_name):
+    functions = {
+        "bcewithlogitsloss": nn.BCEWithLogitsLoss,
+        "binarydiceloss": BinaryDiceLoss,
+    }
+    if _name.lower() in functions:
+        return functions.get(_name.lower())
+    else:
+        raise ValueError(f"[ERROR] Loss: '{_name}' hasn't been enabled.")
 
 
 def save_model(epoch, model, optimizer, path, new_best_model=False):
