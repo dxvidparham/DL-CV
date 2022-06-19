@@ -109,12 +109,17 @@ def train(train_loader, test_loader, model) -> None:
             heatmap_j_max = heatmap_j.max(axis = 0)[0]
             heatmap_j /= heatmap_j_max
 
-
-            visualize_results_saliency(data,heatmap_j,heatmap_j_max)
-
             #Compute how many were correctly classified
             predicted = output.argmax(1)
+
+            
             train_correct += (target==predicted).sum().cpu().item()
+
+        train_acc = train_correct/LEN_TRAINSET
+        if train_acc > 0.95:
+            visualize_results_saliency(data,heatmap_j, predicted)
+
+
         #Comput the test accuracy
         test_correct = 0
         
@@ -133,7 +138,7 @@ def train(train_loader, test_loader, model) -> None:
             predicted = output.argmax(1)
             
             test_correct += (target==predicted).sum().item()
-        train_acc = train_correct/LEN_TRAINSET
+        
         test_acc = test_correct/LEN_TESTSET
             
         print("\n \n Epoch: {epoch}/{total} \n Accuracy train: {train:.1f}%\t test: {test:.1f}% \n Loss: \t train: {loss_train:.3f} \t test: {loss_test:.3f}\n".format(
