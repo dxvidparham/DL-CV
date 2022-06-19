@@ -113,7 +113,7 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
 
             with torch.cuda.amp.autocast():
                 output = model(images)
-                if ARCHITECTURE == 'resnet101':
+                if ARCHITECTURE == "resnet101":
                     output = output["out"]
                 loss = loss_fn(output, labels)
 
@@ -123,7 +123,7 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
             scaler.update()
 
             losses.append(loss.item())
-            train_metrics.update(torch.sigmoid(output), labels)
+            train_metrics.update(output, labels)
 
         train_loss = sum(losses) / len(losses)
         train_mIoU, train_pixAcc = [
@@ -153,12 +153,12 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
 
                 with torch.cuda.amp.autocast():
                     output = model(images)
-                    if ARCHITECTURE == 'resnet101':
+                    if ARCHITECTURE == "resnet101":
                         output = output["out"]
                     loss = loss_fn(output, labels)
 
                 losses.append(loss.item())
-                test_metrics.update(torch.sigmoid(output), labels)
+                test_metrics.update(output, labels)
 
         test_loss = sum(losses) / len(losses)
         test_mIoU, test_pixAcc = [
