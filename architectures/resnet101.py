@@ -7,19 +7,33 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
 
-from dataLoader import ISICDataset
-
+# from dataLoader import ISICDataset
 
 #%% Network
-def load_resnet():
-    resnet101 = torchvision.models.segmentation.fcn_resnet101(pretrained=True)
 
-    resnet101.classifier[4] = nn.Conv2d(in_channels=resnet101.classifier[4].in_channels,
+# def load_resnet():
+#     resnet101 = torchvision.models.segmentation.fcn_resnet101(pretrained=True)
+
+#     resnet101.classifier[4] = nn.Conv2d(in_channels=resnet101.classifier[4].in_channels,
+#                                         out_channels= 1,
+#                                         kernel_size=resnet101.classifier[4].kernel_size,
+#                                         stride=resnet101.classifier[4].stride)
+
+#     return resnet101
+
+
+
+class SegmentationModelOutputWrapper(torch.nn.Module):
+    def __init__(self): 
+        super(SegmentationModelOutputWrapper, self).__init__()
+        self.model = torchvision.models.segmentation.fcn_resnet101(pretrained=True)
+        self.model.classifier[4] = nn.Conv2d(in_channels=self.model.classifier[4].in_channels,
                                         out_channels= 1,
-                                        kernel_size=resnet101.classifier[4].kernel_size,
-                                        stride=resnet101.classifier[4].stride)
-
-    return resnet101
+                                        kernel_size=self.model.classifier[4].kernel_size,
+                                        stride=self.model.classifier[4].stride)
+        
+    def forward(self, x):
+        return self.model(x)["out"]
 
 
 #%%
@@ -32,8 +46,15 @@ def load_resnet():
 # )
 
 #%%
-if __name__ == "__main___":
-    model = resnet101
+if __name__ == "__main__":
+
+    import sys
+
+    sys.path.append("../")
+
+    from dataLoader import ISICDataset
+
+    model = SegmentationModelOutputWrapper()
     IMG_SIZE = [240, 160] 
 
 
@@ -73,5 +94,5 @@ if __name__ == "__main___":
 
         output = model(images)
 
-        print(output['out'].shape)
+        print(output.shape)
 # %%
