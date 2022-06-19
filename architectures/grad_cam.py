@@ -77,7 +77,7 @@ class VGG_seg(nn.Module):
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
         x = self.classifier(x)
-        return x
+        return x, self.selected_out
     
     # method for the gradient extraction
     def get_activations_gradient(self):

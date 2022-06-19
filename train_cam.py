@@ -21,14 +21,19 @@ import click
 import numpy as np
 import torch
 import wandb
+import torchvision
+
+import matplotlib.pyplot as plt
+
 from albumentations.pytorch import ToTensorV2
 from omegaconf import OmegaConf
 from torch import nn, optim
 from tqdm import tqdm
 
+
 from dataLoader import ISICDataset, ClassifierDataset
 from metrics import SegmentationMetric
-from utils import EarlyStopping, get_model, print_statistics, save_model, visualize_results_classification
+from utils import EarlyStopping, get_model, print_statistics, save_model, visualize_results, visualize_results_saliency
 
 # set flags / seeds to speed up the training process
 np.random.seed(1)
@@ -82,14 +87,31 @@ def train(train_loader, test_loader, model) -> None:
             #Zero the gradients computed for each weight
             optimizer.zero_grad()
             #Forward pass your image through the network
-            output = model(data)
+            output, acts = model(data)
+
+
             #Compute the loss
             loss_train = criterion(output, target)
             #Backward pass through the network
             loss_train.backward()
             #Update the weights
             optimizer.step()
-            
+
+
+            acts = acts.detach().cpu()
+            grads = model.get_act_grads().detach().cpu()
+            pooled_grads = torch.mean(grads, dim=[0,2,3]).detach().cpu()
+
+            for i in range(acts.shape[1]):
+                acts[:,i,:,:] += pooled_grads[i]
+
+            heatmap_j = torch.mean(acts, dim = 1).squeeze()
+            heatmap_j_max = heatmap_j.max(axis = 0)[0]
+            heatmap_j /= heatmap_j_max
+
+
+            visualize_results_saliency(data,heatmap_j,heatmap_j_max)
+
             #Compute how many were correctly classified
             predicted = output.argmax(1)
             train_correct += (target==predicted).sum().cpu().item()
@@ -105,7 +127,7 @@ def train(train_loader, test_loader, model) -> None:
 
             data.requires_grad_()
             
-            output = model(data)
+            output, _ = model(data)
             loss_test = criterion(output, target)
 
             predicted = output.argmax(1)

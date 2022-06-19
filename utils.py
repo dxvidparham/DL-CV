@@ -15,6 +15,7 @@
 import os
 
 import torch
+import torchvision
 import matplotlib.pyplot as plt
 import itertools
 import numpy as np
@@ -160,3 +161,25 @@ def visualize_results_classification(images, predicted, label):
         plt.title(f'Pred: {pred.item()}, GT: {gt.item()}')
         plt.savefig(unique_file("out/images/test_result_all","png"),bbox_inches = "tight")
     print("saved_file")
+
+def visualize_results_saliency(images, saliency, label):
+    # print(f"Image: {images.shape} {type(images)} {len(images)}, predicted: {predicted.shape} {type(predicted)}, GT: {label.shape} {type(label)}")
+    for k, (img, pred, gt) in enumerate(zip(images, saliency, label)):
+        # print(f"Image: {img} {type(img)}, predicted: {pred} {type(pred)}, GT: {gt} {type(gt)}")
+        plt.figure(figsize=(10,10))
+        subplots = [plt.subplot(1, 2, k+1) for k in range(2)]
+        print(f"image {k} added to plot")
+        img = (img.permute(1, 2, 0) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+        # sal = torchvision.transforms.Resize((224,224))(pred)
+        # print(f"gt: {gt}")
+        # gt_mask = np.zeros_like(pred)[gt>0.5]=1
+        subplots[0].imshow(img.cpu().numpy())
+        subplots[0].axis('off')
+        subplots[0].set_title('Test image')
+        subplots[1].imshow(pred)
+        subplots[1].axis('off')
+        subplots[1].set_title('Ground truth')
+
+        plt.savefig(unique_file("out/images/test_result_all","png"),bbox_inches = "tight")
+    print("saved_file")
+
