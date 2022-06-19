@@ -78,7 +78,6 @@ def train(train_loader, test_loader, model) -> None:
             data, target = data.to(DEVICE), target.to(DEVICE)
 
             data.requires_grad_()
-            target.requires_grad_()
 
             #Zero the gradients computed for each weight
             optimizer.zero_grad()
@@ -104,9 +103,7 @@ def train(train_loader, test_loader, model) -> None:
             data = data.to(DEVICE)
             target = target.to(DEVICE)
 
-
             data.requires_grad_()
-            target.requires_grad_()
             
             output = model(data)
             loss_test = criterion(output, target)

@@ -145,3 +145,6 @@ checkpoints/**
 
 poetry.lock
 pyproject.toml
+
+#images
+*.png

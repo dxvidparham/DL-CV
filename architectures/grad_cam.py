@@ -16,109 +16,28 @@ import torch.nn.functional as F
 
 #%%
 
-# class VGG_seg(nn.Module):
-#     def __init__(self):
-#         super(VGG_seg, self).__init__()
-
-#         # get the pretrained VGG19 network
-#         self.vgg = torchvision.models.vgg19(pretrained=True)
-        
-#         # disect the network to access its last convolutional layer
-#         self.features_conv = self.vgg.features
-        
-#         # get the max pool of the features stem
-#         self.max_pool = self.max_pool
-        
-#         # get the classifier of the vgg19
-#         self.classifier = self.vgg.classifier
-#         self.classifier[-1] = nn.Linear(in_features=self.vgg.classifier[-1].in_features,
-#                                         out_features=1
-#                                         )
-        
-#         # placeholder for the gradients
-#         self.gradients = None
-
-#         self.tensorhook = []
-#         self.layerhook = []
-
-#         self.selected_out = None
-
-#         self.layerhook.append(self.features_conv.register_forward_hook(self.forward_hook()))
-
-
-#         for p in self.vgg.parameters():
-#             p.requires_grad = True
-
-#     # hook for the gradients of the activations
-#     def activations_hook(self, grad):
-#         self.gradients = grad
-
-#     def get_act_grads(self):
-#         return self.gradients
-
-#     def forward_hook(self):
-#         def hook(module, inp, out):
-#             self.selected_out = out
-#             self.tensorhook.append(out.register_hook(self.activations_hook))
-#         return hook
-        
-#     def forward(self, x):
-#         x = self.features_conv(x)
-        
-#         # register the hook
-#         self.feature_out = x
-#         # h = x.register_hook(self.activations_hook)
-
-#         # apply the remaining pooling
-#         x = self.max_pool(x)
-#         x = x.view(x.size(0), -1)
-#         x = self.classifier(x)
-#         return torch.sigmoid(x), self.selected_out
-    
-#     # method for the gradient extraction
-#     def get_activations_gradient(self):
-#         return self.gradients
-    
-#     # method for the activation exctraction
-#     def get_activations(self, x):
-#         return self.features_conv(x)
-
-#     def segmentation(self, x):
-#         inx = x
-#         x = self.forward(x)
-#         pred = F.sigmoid(x).argmax(dim = 1)
-
 class VGG_seg(nn.Module):
     def __init__(self):
         super(VGG_seg, self).__init__()
+
+        # get the pretrained VGG19 network
+        self.vgg = torchvision.models.vgg19(pretrained=True)
+
+        print(self.vgg)
         
         # disect the network to access its last convolutional layer
-        self.features_conv = nn.Sequential(
-                nn.Conv2d(in_channels=3,
-                        out_channels=8,
-                        kernel_size=(3,3),
-                        padding='same'),
-                nn.ReLU(),
-                nn.Conv2d(in_channels=8,
-                          out_channels=8,
-                          kernel_size=(3,3),
-                         padding='same'),
-                nn.ReLU(),
-                nn.Conv2d(in_channels=8,
-                          out_channels=16,
-                          kernel_size=(3,3),
-                         padding='same'),
-        )
+        self.features_conv = self.vgg.features[:-1]
         
+        # get the max pool of the features stem
+        self.max_pool = self.vgg.features[-1]
+        self.avgpool = self.vgg.avgpool
         
         # get the classifier of the vgg19
-        self.classifier = nn.Sequential(
-                nn.Linear(224*224*16, 500),
-                nn.ReLU(),
-                nn.Linear(500, 2),
-        )
+        self.classifier = self.vgg.classifier
+        self.classifier[-1] = nn.Linear(in_features=self.vgg.classifier[-1].in_features,
+                                        out_features=2
+                                        )
         
-
         # placeholder for the gradients
         self.gradients = None
 
@@ -130,10 +49,7 @@ class VGG_seg(nn.Module):
         self.layerhook.append(self.features_conv.register_forward_hook(self.forward_hook()))
 
 
-        for p in self.features_conv.parameters():
-            p.requires_grad = True
-
-        for p in self.classifier.parameters():
+        for p in self.vgg.parameters():
             p.requires_grad = True
 
     # hook for the gradients of the activations
@@ -157,12 +73,11 @@ class VGG_seg(nn.Module):
         # h = x.register_hook(self.activations_hook)
 
         # apply the remaining pooling
-        # x = self.max_pool(x)
+        x = self.max_pool(x)
+        x = self.avgpool(x)
         x = x.view(x.size(0), -1)
         x = self.classifier(x)
         return x
-
-
     
     # method for the gradient extraction
     def get_activations_gradient(self):
@@ -176,6 +91,96 @@ class VGG_seg(nn.Module):
         inx = x
         x = self.forward(x)
         pred = F.sigmoid(x).argmax(dim = 1)
+
+#----------------------------------------------------------------------------
+# class VGG_seg(nn.Module):
+#     def __init__(self):
+#         super(VGG_seg, self).__init__()
+        
+#         # disect the network to access its last convolutional layer
+#         self.features_conv = nn.Sequential(
+#                 nn.Conv2d(in_channels=3,
+#                         out_channels=8,
+#                         kernel_size=(3,3),
+#                         padding='same'),
+#                 nn.ReLU(),
+#                 nn.Conv2d(in_channels=8,
+#                           out_channels=8,
+#                           kernel_size=(3,3),
+#                          padding='same'),
+#                 nn.ReLU(),
+#                 nn.Conv2d(in_channels=8,
+#                           out_channels=16,
+#                           kernel_size=(3,3),
+#                          padding='same'),
+#         )
+        
+        
+#         # get the classifier of the vgg19
+#         self.classifier = nn.Sequential(
+#                 nn.Linear(224*224*16, 500),
+#                 nn.ReLU(),
+#                 nn.Linear(500, 2),
+#         )
+        
+
+#         # placeholder for the gradients
+#         self.gradients = None
+
+#         self.tensorhook = []
+#         self.layerhook = []
+
+#         self.selected_out = None
+
+#         self.layerhook.append(self.features_conv.register_forward_hook(self.forward_hook()))
+
+
+#         for p in self.features_conv.parameters():
+#             p.requires_grad = True
+
+#         for p in self.classifier.parameters():
+#             p.requires_grad = True
+
+#     # hook for the gradients of the activations
+#     def activations_hook(self, grad):
+#         self.gradients = grad
+
+#     def get_act_grads(self):
+#         return self.gradients
+
+#     def forward_hook(self):
+#         def hook(module, inp, out):
+#             self.selected_out = out
+#             self.tensorhook.append(out.register_hook(self.activations_hook))
+#         return hook
+        
+#     def forward(self, x):
+#         x = self.features_conv(x)
+        
+#         # register the hook
+#         self.feature_out = x
+#         # h = x.register_hook(self.activations_hook)
+
+#         # apply the remaining pooling
+#         # x = self.max_pool(x)
+#         x = x.view(x.size(0), -1)
+#         x = self.classifier(x)
+#         return x
+
+
+    
+#     # method for the gradient extraction
+#     def get_activations_gradient(self):
+#         return self.gradients
+    
+#     # method for the activation exctraction
+#     def get_activations(self, x):
+#         return self.features_conv(x)
+
+#     def segmentation(self, x):
+#         inx = x
+#         x = self.forward(x)
+#         pred = F.sigmoid(x).argmax(dim = 1)
 
 #------------------------------------------------------------------------------
 
