@@ -112,8 +112,6 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
 
             with torch.cuda.amp.autocast():
                 output = model(images)
-                if ARCHITECTURE == "resnet101":
-                    output = output["out"]
                 loss = loss_fn(output, labels)
 
             optimizer.zero_grad(set_to_none=True)
@@ -152,8 +150,6 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
 
                 with torch.cuda.amp.autocast():
                     output = model(images)
-                    if ARCHITECTURE == "resnet101":
-                        output = output["out"]
                     loss = loss_fn(output, labels)
 
                 losses.append(loss.item())
