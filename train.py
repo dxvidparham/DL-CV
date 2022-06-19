@@ -52,7 +52,6 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 ARCHITECTURE = config.ARCHITECTURE
 IMG_SIZE = config.IMG_SIZE
 PIN_MEMORY = config.PIN_MEMORY
-
 PRETRAINED = True
 
 
@@ -234,7 +233,11 @@ def main(wandb):
         ],
     )
 
-    config.pop("IMG_SIZE")
+    transformation_lst = []
+    for transformation in train_transform:
+        transformation_lst.append(str(transformation).split("(")[0])
+
+    config["TRAIN_TRANSFORMATIONS"] = transformation_lst
 
     print("[INFO] Load datasets from disk...")
     training_set = ISICDataset(train_transform)
