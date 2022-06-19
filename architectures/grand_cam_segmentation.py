@@ -104,7 +104,7 @@ if __name__ == "__main__":
             training_set,
             shuffle=True,
             num_workers=4,
-            batch_size=1,
+            batch_size=2,
         )
 
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -121,7 +121,6 @@ if __name__ == "__main__":
 
         # Set the requires_grad_ to the image for retrieving gradients
         images.requires_grad_()
-
 
         output = model(images)
         # Catch the output
