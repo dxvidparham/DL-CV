@@ -22,7 +22,6 @@ from albumentations.pytorch import ToTensorV2
 #     return resnet101
 
 
-
 class SegmentationModelOutputWrapper(torch.nn.Module):
     def __init__(self): 
         super(SegmentationModelOutputWrapper, self).__init__()
