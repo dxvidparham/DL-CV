@@ -33,9 +33,15 @@ class ISICDataset(torch.utils.data.Dataset):
     def __init__(
         self, transform=None, data_path="/dtu/datasets1/02514/isic/train_allstyles"
     ):
-
-        self.image_paths = glob.glob(f"{data_path}/Images/*.jpg")
-        self.mask_paths = glob.glob(f"{data_path}/Segmentations/*.png")
+        self.mask_paths = []
+        self.image_paths = sorted(glob.glob(f"{data_path}/Images/*.jpg"))
+        for path in self.image_paths:
+            file_name = path.split("/")[-1][:-4]
+            self.mask_paths.append(
+                sorted(glob.glob(f"{data_path}/Segmentations/{file_name}*.png"))[0]
+            )
+        if len(self.mask_paths) == len(self.image_paths):
+            print("dataset size correct")
         self.transform = transform
 
         self.search_img_dict = {
