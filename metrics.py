@@ -30,8 +30,8 @@ class SegmentationMetric(object):
         self.pixAcc = []
 
     def update(self, output, labels):
-        output = torch.sigmoid(output)
-        labels = labels.int()
+        # output = torch.sigmoid(output)
+        # labels = labels.int()
 
         acc_score = accuracy(output, labels).cpu()
         self.pixAcc.append(acc_score)
