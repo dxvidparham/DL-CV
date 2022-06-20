@@ -70,7 +70,6 @@ class VGG_seg(nn.Module):
         
         # register the hook
         self.feature_out = x
-        # h = x.register_hook(self.activations_hook)
 
         # apply the remaining pooling
         x = self.max_pool(x)
@@ -87,10 +86,6 @@ class VGG_seg(nn.Module):
     def get_activations(self, x):
         return self.features_conv(x)
 
-    def segmentation(self, x):
-        inx = x
-        x = self.forward(x)
-        pred = F.sigmoid(x).argmax(dim = 1)
 
 #----------------------------------------------------------------------------
 # class VGG_seg(nn.Module):
