@@ -174,12 +174,12 @@ def train(train_loader, test_loader, segmentation_loader, model) -> None:
             test_metrics.update(segmentation, target_mask)
             
 
-            if epoch >= 2:
-                visualize_results_saliency(data,heatmap, predicted_class, target_label)
-                print('============================')
-                # segmentation = segmentation[:,None,:,:]
-                visualize_results(data,segmentation,target_mask)
-                print('============================')
+            # if epoch >= 2:
+            #     visualize_results_saliency(data,heatmap, predicted_class, target_label)
+            #     print('============================')
+            #     # segmentation = segmentation[:,None,:,:]
+            #     visualize_results(data,segmentation,target_mask)
+            #     print('============================')
                 
         class_acc = class_correct/LEN_SEGMENTSET
         mIoU, pixAcc = [
