@@ -133,13 +133,13 @@ def train(train_loader, test_loader, model) -> None:
             loss_test = criterion(output, target)
 
             predicted = output.argmax(1)
-            
             test_correct += (target==predicted).sum().item()
-
             test_acc_batch = (target==predicted).sum() / len(data)
 
-            if test_acc_batch > 0.95:
-                visualize_results_saliency(data,heatmap_j, predicted)
+            # segmentation, heatmap = model.segmentation_by_saliency()
+
+            # if test_acc_batch > 0.95:
+                # visualize_results_saliency(data,heatmap, predicted)
         
         test_acc = test_correct/LEN_TESTSET
             

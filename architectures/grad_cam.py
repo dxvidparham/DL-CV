@@ -86,6 +86,29 @@ class VGG_seg(nn.Module):
     def get_activations(self, x):
         return self.features_conv(x)
 
+    # def segmentation_by_saliency(self):
+    #     acts = self.selected_out.detach().cpu()
+    #     grads = self.get_act_grads().detach().cpu()
+    #     pooled_grads = torch.mean(grads, dim=[0,2,3]).detach().cpu()
+
+    #     for i in range(acts.shape[1]):
+    #             acts[:,i,:,:] += pooled_grads[i]
+
+    #     heatmap_j = torch.mean(acts, dim = 1).squeeze()
+    #     heatmap_j_max = heatmap_j.max(axis = 0)[0]
+    #     heatmap_j /= heatmap_j_max
+
+    #     segmentation_mask = heatmap_j
+
+    #     # sal = heatmap_j[]
+    #     print(sal.shape)
+    #     sal = torchvision.transforms.Resize(224)(sal)
+    #     sal = sal.reshape(224,224)
+
+
+    #     return 1, 2
+
+
 
 #----------------------------------------------------------------------------
 # class VGG_seg(nn.Module):

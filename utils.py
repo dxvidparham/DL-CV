@@ -234,10 +234,13 @@ def visualize_results_saliency(images, saliency, prediction):
         subplots = [plt.subplot(1, 2, k+1) for k in range(2)]
         print(f"image {k} added to plot")
         img = (img.permute(1, 2, 0) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-        sal = sal.reshape(1,14,14)
-        print(sal.shape)
-        sal = torchvision.transforms.Resize(224)(sal)
-        sal = sal.reshape(224,224)
+
+        
+        # sal = sal.reshape(1,14,14)
+        # print(sal.shape)
+        # sal = torchvision.transforms.Resize(224)(sal)
+        # sal = sal.reshape(224,224)
+
         # print(f"gt: {gt}")
         # gt_mask = np.zeros_like(pred)[gt>0.5]=1
         subplots[0].imshow(img.cpu().numpy())
