@@ -70,8 +70,24 @@ TEST_PATH = config.TEST_STYLE_PATH
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 ARCHITECTURE = hp_config.ARCHITECTURE
 
+disable_wandb=False
+
+# Control wandb initialization
+if disable_wandb:
+    wandb.init(mode="disabled")
+else:
+    wandb.init(
+        project="Segmentation",
+        config=dict(hp_config),
+        entity="dlincvg1",
+        tags=["Saliency"],
+    )
+    
+
 
 def train(train_loader, test_loader, segmentation_loader, model) -> None:
+
+    wandb.watch(model, log_freq=100)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     criterion = nn.CrossEntropyLoss()
@@ -119,10 +135,11 @@ def train(train_loader, test_loader, segmentation_loader, model) -> None:
 
         train_acc = train_correct/LEN_TRAINSET
         
-
-        #Comput the test accuracy
-        test_correct = 0
+        #====================================================
+        # Test
+        #====================================================
         
+        test_correct = 0        
         model.eval()
         #=========================================
         # test classification
@@ -189,6 +206,10 @@ def train(train_loader, test_loader, segmentation_loader, model) -> None:
         print("\n Segmentation: \n \tAccuracy classification: {score:.1f}".format(
                                                             score=100*class_acc))
         print(f"\tpixAcc={pixAcc:.2f}%\t mIoU={mIoU:.2f}%\n")
+
+        # Log train loss and acc
+        wandb.log({"test_pixAcc": pixAcc})
+        wandb.log({"test_mIoU": mIoU})
 #=====================================================================================================
 
 

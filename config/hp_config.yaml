@@ -1,8 +1,8 @@
 #config.yaml
 
-EPOCHS: 20
+EPOCHS: 50
 BATCH_SIZE: 32
-LEARNING_RATE: 1e-4
+LEARNING_RATE: 1e-6
 
 ## Choose between UNet, UNet++, resnet101, grad_cam
 ARCHITECTURE: "grad_cam"
