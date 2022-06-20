@@ -71,10 +71,12 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 ARCHITECTURE = hp_config.ARCHITECTURE
 
 
-def train(train_loader, test_loader, model) -> None:
+def train(train_loader, test_loader, segmentation_loader, model) -> None:
 
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     criterion = nn.CrossEntropyLoss()
+
+    test_metrics = SegmentationMetric()
 
     num_epochs = EPOCHS
 
@@ -122,6 +124,8 @@ def train(train_loader, test_loader, model) -> None:
         test_correct = 0
         
         model.eval()
+        #=========================================
+        # test classification
         for data, target in test_loader:
             
             data = data.to(DEVICE)
@@ -134,20 +138,57 @@ def train(train_loader, test_loader, model) -> None:
 
             predicted = output.argmax(1)
             test_correct += (target==predicted).sum().item()
-            test_acc_batch = (target==predicted).sum() / len(data)
+            
 
-            # segmentation, heatmap = model.segmentation_by_saliency()
-
-            # if test_acc_batch > 0.95:
-                # visualize_results_saliency(data,heatmap, predicted)
         
         test_acc = test_correct/LEN_TESTSET
-            
-        print("\n \n Epoch: {epoch}/{total} \n Accuracy train: {train:.1f}%\t test: {test:.1f}% \n Loss: \t train: {loss_train:.3f} \t test: {loss_test:.3f}\n".format(
+        print("\n \n Classification:")    
+        print("\nEpoch: {epoch}/{total} \n \tAccuracy train: {train:.1f}%\t test: {test:.1f}% \n\t Loss: \t train: {loss_train:.3f} \t test: {loss_test:.3f}\n".format(
                                                             epoch=epoch, total=EPOCHS,
                                                             test=100*test_acc, train=100*train_acc,
                                                             loss_train=loss_train, loss_test=loss_test))
 
+        #=========================================
+        # test segmentation
+        class_correct = 0
+        test_metrics.reset()
+        for data, target_mask in segmentation_loader:
+            
+            data = data.to(DEVICE)
+            target_mask = target_mask.to(DEVICE)
+            target_label = torch.ones((len(data))).type(torch.LongTensor)
+            target_label = target_label.to(DEVICE)
+
+            data.requires_grad_()
+            
+            # classification part
+            output_class, _ = model(data)
+            loss_seg = criterion(output_class, target_label)
+            predicted_class = output_class.argmax(1)
+            class_correct += (target_label==predicted_class).sum().item()
+            test_acc_batch = (target_label==predicted_class).sum() / len(data)
+            
+            # segmentation part
+            heatmap, segmentation = model.segmentation_by_saliency()
+            segmentation = segmentation.to(DEVICE)
+            test_metrics.update(segmentation, target_mask)
+            
+
+            if epoch >= 2:
+                visualize_results_saliency(data,heatmap, predicted_class, target_label)
+                print('============================')
+                # segmentation = segmentation[:,None,:,:]
+                visualize_results(data,segmentation,target_mask)
+                print('============================')
+                
+        class_acc = class_correct/LEN_SEGMENTSET
+        mIoU, pixAcc = [
+        100 * np.mean(metric) for metric in test_metrics.get()
+        ]
+            
+        print("\n Segmentation: \n \tAccuracy classification: {score:.1f}".format(
+                                                            score=100*class_acc))
+        print(f"\tpixAcc={pixAcc:.2f}%\t mIoU={mIoU:.2f}%\n")
 #=====================================================================================================
 
 
@@ -164,7 +205,6 @@ def main(wandb):
 
     # Get transformations for respective training split
     train_transform = ImageTransformations(is_train=True, img_size=IMG_SIZE)
-    # test_transform = ImageTransformations(is_train=False, img_size=IMG_SIZE)
 
     # Append names of transformations to config, to track data augmentation strategy
     config["TRAIN_TRANSFORMATIONS"] = train_transform.__names__()
@@ -200,27 +240,22 @@ def main(wandb):
         batch_size=BATCH_SIZE,
         )
     #==============
-    # TODO: Load segmentation set for testing data
-    # seg_training_set = ISICDataset(
-    #     TRAIN_PATHS.get("train_allstyles"), train_transform.augmentations
-    # )
-    # seg_testing_set = ISICDataset(TEST_PATH, test_transform.augmentations)
+    # Load segmentation test set
 
-    # print("[INFO] Prepare dataloaders...")
-    # trainloader = torch.utils.data.DataLoader(
-    #     training_set,
-    #     shuffle=True,
-    #     num_workers=N_WORKERS,
-    #     batch_size=BATCH_SIZE,
-    #     pin_memory=PIN_MEMORY,
-    # )
-    # testloader = torch.utils.data.DataLoader(
-    #     testing_set,
-    #     shuffle=False,
-    #     num_workers=N_WORKERS,
-    #     batch_size=BATCH_SIZE,
-    #     pin_memory=PIN_MEMORY,
-    # )
+    test_transform = ImageTransformations(is_train=False, img_size=IMG_SIZE)
+
+    seg_testing_set = ISICDataset(TEST_PATH, test_transform.augmentations)
+
+    global LEN_SEGMENTSET
+    LEN_SEGMENTSET = len(seg_testing_set)
+
+    seg_testloader = torch.utils.data.DataLoader(
+        seg_testing_set,
+        shuffle=False,
+        num_workers=N_WORKERS,
+        batch_size=BATCH_SIZE,
+        pin_memory=PIN_MEMORY,
+    )
 
     model = get_model(ARCHITECTURE)
     # Push model to GPU if available
@@ -230,8 +265,7 @@ def main(wandb):
     else:
         print("[INFO] Training model on CPU...")
 
-    
-    train(class_trainloader, class_testloader, model)
+    train(class_trainloader, class_testloader, seg_testloader, model)
 
 
 if __name__ == "__main__":

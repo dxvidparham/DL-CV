@@ -189,12 +189,12 @@ def visualize_results(images, predicted, label):
         subplots = [plt.subplot(1, 3, k + 1) for k in range(3)]
         print(f"image {k} added to plot")
         img = (img.permute(1, 2, 0) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-        pred = pred.permute(1, 2, 0).to(torch.uint8).cpu().numpy()
-        pred_mask = np.zeros_like(pred)
-        mask = pred > 0.5
-        pred_mask[mask] = 1
+        pred = pred.to(torch.uint8).cpu().numpy()
+        # pred_mask = np.zeros_like(pred)
+        # mask = pred > 0.5
+        # pred_mask[mask] = 1
         # print(f"pred_mask: {pred_mask.shape}")
-        gt = gt.permute(1, 2, 0).to(torch.uint8).cpu().numpy()
+        gt = gt.to(torch.uint8).cpu().numpy()
         # print(f"gt: {gt}")
         # gt_mask = np.zeros_like(pred)[gt>0.5]=1
         subplots[0].imshow(img.cpu().numpy())
@@ -204,7 +204,7 @@ def visualize_results(images, predicted, label):
         subplots[1].axis("off")
         subplots[1].set_title("Ground truth")
         # plt.savefig(unique_file("out/images/test_result_gt","png"),bbox_inches = "tight")
-        subplots[2].imshow(pred_mask, "turbo")
+        subplots[2].imshow(pred, "turbo")
         subplots[2].axis("off")
         subplots[2].set_title("Predicted")
         plt.savefig(
@@ -226,30 +226,22 @@ def visualize_results_classification(images, predicted, label):
         plt.savefig(unique_file("out/images/test_result_all","png"),bbox_inches = "tight")
     print("saved_file")
 
-def visualize_results_saliency(images, saliency, prediction):
+def visualize_results_saliency(images, saliency, prediction, labels):
     # print(f"Image: {images.shape} {type(images)} {len(images)}, predicted: {predicted.shape} {type(predicted)}, GT: {label.shape} {type(label)}")
-    for k, (img, sal, pred) in enumerate(zip(images, saliency, prediction)):
+    for k, (img, sal, pred, lab) in enumerate(zip(images, saliency, prediction, labels)):
         # print(f"Image: {img} {type(img)}, predicted: {pred} {type(pred)}, GT: {gt} {type(gt)}")
         plt.figure(figsize=(10,10))
         subplots = [plt.subplot(1, 2, k+1) for k in range(2)]
         print(f"image {k} added to plot")
         img = (img.permute(1, 2, 0) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-
-        
-        # sal = sal.reshape(1,14,14)
-        # print(sal.shape)
-        # sal = torchvision.transforms.Resize(224)(sal)
-        # sal = sal.reshape(224,224)
-
-        # print(f"gt: {gt}")
-        # gt_mask = np.zeros_like(pred)[gt>0.5]=1
+  
         subplots[0].imshow(img.cpu().numpy())
         subplots[0].axis('off')
-        subplots[0].set_title('Test image')
+        subplots[0].set_title(f'Test image: {lab.item()}')
         subplots[1].imshow(sal)
         subplots[1].axis('off')
         subplots[1].set_title(f'Prediction: {pred.item()}')
 
-        plt.savefig(unique_file("out/images/test_result_all","png"),bbox_inches = "tight")
+        plt.savefig(unique_file("out/images/saliency","png"),bbox_inches = "tight")
     print("saved_file")
 
