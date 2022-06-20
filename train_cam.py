@@ -16,6 +16,8 @@ import os
 from pyexpat import model
 import time
 
+
+
 import albumentations as A
 import click
 import numpy as np
@@ -29,11 +31,13 @@ from albumentations.pytorch import ToTensorV2
 from omegaconf import OmegaConf
 from torch import nn, optim
 from tqdm import tqdm
+from collections import ChainMap
 
 
 from dataLoader import ISICDataset, ClassifierDataset
 from metrics import SegmentationMetric
-from utils import EarlyStopping, get_model, print_statistics, save_model, visualize_results, visualize_results_saliency
+from utils import EarlyStopping, ImageTransformations, get_model, print_statistics, save_model, visualize_results, visualize_results_saliency
+
 
 # set flags / seeds to speed up the training process
 np.random.seed(1)
@@ -43,29 +47,28 @@ torch.autograd.set_detect_anomaly(False)
 torch.autograd.profiler.profile(False)
 torch.autograd.profiler.emit_nvtx(False)
 
-# Load config file
+# Load config files
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
 config = OmegaConf.load(f"{BASE_DIR}/config/config.yaml")
+hp_config = OmegaConf.load(f"{BASE_DIR}/config/hp_config.yaml")
 
 # Hyperparameter
-EPOCHS = config.EPOCHS
-BATCH_SIZE = config.BATCH_SIZE
-LEARNING_RATE = config.LEARNING_RATE
+EPOCHS = hp_config.EPOCHS
+BATCH_SIZE = hp_config.BATCH_SIZE
+LEARNING_RATE = hp_config.LEARNING_RATE
 
 # Other const variables
 N_WORKERS = config.N_WORKERS
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-ARCHITECTURE = config.ARCHITECTURE
 IMG_SIZE = config.IMG_SIZE
 PIN_MEMORY = config.PIN_MEMORY
 
-PRETRAINED = True
+# Load training paths into const variable
+TRAIN_PATHS = ChainMap(*config.TRAIN_STYLE_PATHS[::-1])
+TEST_PATH = config.TEST_STYLE_PATH
 
-training_set = ClassifierDataset()
-testing_set = ClassifierDataset()
-
-LEN_TRAINSET = len(training_set)
-LEN_TESTSET = len(testing_set)
+# Other const variables
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+ARCHITECTURE = hp_config.ARCHITECTURE
 
 
 def train(train_loader, test_loader, model) -> None:
@@ -89,14 +92,12 @@ def train(train_loader, test_loader, model) -> None:
             #Forward pass your image through the network
             output, acts = model(data)
 
-
             #Compute the loss
             loss_train = criterion(output, target)
             #Backward pass through the network
             loss_train.backward()
             #Update the weights
             optimizer.step()
-
 
             acts = acts.detach().cpu()
             grads = model.get_act_grads().detach().cpu()
@@ -111,19 +112,15 @@ def train(train_loader, test_loader, model) -> None:
 
             #Compute how many were correctly classified
             predicted = output.argmax(1)
-
             
             train_correct += (target==predicted).sum().cpu().item()
 
         train_acc = train_correct/LEN_TRAINSET
-        if train_acc > 0.95:
-            visualize_results_saliency(data,heatmap_j, predicted)
-
+        
 
         #Comput the test accuracy
         test_correct = 0
         
-
         model.eval()
         for data, target in test_loader:
             
@@ -138,6 +135,11 @@ def train(train_loader, test_loader, model) -> None:
             predicted = output.argmax(1)
             
             test_correct += (target==predicted).sum().item()
+
+            test_acc_batch = (target==predicted).sum() / len(data)
+
+            if test_acc_batch > 0.95:
+                visualize_results_saliency(data,heatmap_j, predicted)
         
         test_acc = test_correct/LEN_TESTSET
             
@@ -154,58 +156,71 @@ def train(train_loader, test_loader, model) -> None:
     "--wandb", is_flag=True, default=False, help="Use this flag to enable wandb"
 )
 def main(wandb):
+    
+    # Load config files
+    BASE_DIR = os.path.dirname(os.path.realpath(__file__))
+    config = OmegaConf.load(f"{BASE_DIR}/config/config.yaml")
+    hp_config = OmegaConf.load(f"{BASE_DIR}/config/hp_config.yaml")
 
-    train_transform = A.Compose(
-        [
-            A.Resize(*IMG_SIZE),
-            # A.Rotate(limit=35, p=1.0),
-            # A.HorizontalFlip(p=0.5),
-            # A.VerticalFlip(p=0.1),
-            A.Normalize(
-                mean=[0.0, 0.0, 0.0],
-                std=[1.0, 1.0, 1.0],
-                max_pixel_value=255.0,
-            ),
-            ToTensorV2(),
-        ],
-    )
+    # Get transformations for respective training split
+    train_transform = ImageTransformations(is_train=True, img_size=IMG_SIZE)
+    # test_transform = ImageTransformations(is_train=False, img_size=IMG_SIZE)
 
-    test_transforms = A.Compose(
-        [
-            A.Resize(*IMG_SIZE),
-            A.Normalize(
-                mean=[0.0, 0.0, 0.0],
-                std=[1.0, 1.0, 1.0],
-                max_pixel_value=255.0,
-            ),
-            ToTensorV2(),
-        ],
-    )
-
-    config.pop("IMG_SIZE")
+    # Append names of transformations to config, to track data augmentation strategy
+    config["TRAIN_TRANSFORMATIONS"] = train_transform.__names__()
 
     print("[INFO] Load datasets from disk...")
-    training_set = ClassifierDataset(train_transform)
-    testing_set = ClassifierDataset(test_transforms)
+    classifier_set = ClassifierDataset(transform=train_transform.augmentations)
 
-    LEN_TRAINSET = len(training_set)
-    LEN_TESTSET = len(testing_set)
+    
+    len_classifier_set = len(classifier_set)
 
-    print("[INFO] Prepare dataloaders...")
-    trainloader = torch.utils.data.DataLoader(
-        training_set,
+    train_count = int(len_classifier_set * 0.7)
+    test_count = int(len_classifier_set * 0.3)
+
+    class_trainset, class_testset = torch.utils.data.random_split(
+                                                    classifier_set, [train_count, test_count])
+    global LEN_TRAINSET
+    global LEN_TESTSET 
+    LEN_TRAINSET = len(class_trainset)
+    LEN_TESTSET = len(class_testset)
+
+    print("[INFO] Prepare labeldataloaders...")
+    class_trainloader = torch.utils.data.DataLoader(
+        class_trainset,
         shuffle=True,
         num_workers=N_WORKERS,
         batch_size=BATCH_SIZE,
-        pin_memory=PIN_MEMORY,
-    )
-    testloader = torch.utils.data.DataLoader(
-        testing_set,
-        shuffle=False,
+        )
+
+    class_testloader = torch.utils.data.DataLoader(
+        class_testset,
+        shuffle=True,
         num_workers=N_WORKERS,
         batch_size=BATCH_SIZE,
-        pin_memory=PIN_MEMORY,
-    )
+        )
+    #==============
+    # TODO: Load segmentation set for testing data
+    # seg_training_set = ISICDataset(
+    #     TRAIN_PATHS.get("train_allstyles"), train_transform.augmentations
+    # )
+    # seg_testing_set = ISICDataset(TEST_PATH, test_transform.augmentations)
+
+    # print("[INFO] Prepare dataloaders...")
+    # trainloader = torch.utils.data.DataLoader(
+    #     training_set,
+    #     shuffle=True,
+    #     num_workers=N_WORKERS,
+    #     batch_size=BATCH_SIZE,
+    #     pin_memory=PIN_MEMORY,
+    # )
+    # testloader = torch.utils.data.DataLoader(
+    #     testing_set,
+    #     shuffle=False,
+    #     num_workers=N_WORKERS,
+    #     batch_size=BATCH_SIZE,
+    #     pin_memory=PIN_MEMORY,
+    # )
 
     model = get_model(ARCHITECTURE)
     # Push model to GPU if available
@@ -216,7 +231,7 @@ def main(wandb):
         print("[INFO] Training model on CPU...")
 
     
-    train(trainloader, testloader,model)
+    train(class_trainloader, class_testloader, model)
 
 
 if __name__ == "__main__":

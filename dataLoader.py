@@ -92,7 +92,6 @@ class ClassifierDataset(torch.utils.data.Dataset):
        
         image_path = self.image_paths[idx]
         
-
         image = np.array(Image.open(image_path))
         
 
@@ -106,7 +105,7 @@ class ClassifierDataset(torch.utils.data.Dataset):
 if __name__ == "__main__":
 
     print("[INFO] Load datasets from disk...")
-    dataset = ISICDataset()
+    dataset = ISICDataset(data_path= "/dtu/datasets1/02514/isic/train_allstyles")
 
     print("[INFO] Prepare dataloaders...")
     dataloader = torch.utils.data.DataLoader(

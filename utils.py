@@ -24,12 +24,7 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from torch import nn, optim
 
-<<<<<<< HEAD
 from architectures import FCN, NestedUNet, UNet, resnet101, grad_cam
-=======
-from architectures import NestedUNet, UNet, resnet101
-from loss import BinaryDiceLoss
->>>>>>> segmentation
 
 
 class EarlyStopping:
@@ -88,9 +83,9 @@ class ImageTransformations:
         return transformation_lst
 
 
-def models(_name):
+def get_model(_name):
     # changed to pass object not class
-    model_name = model_name.lower()
+    model_name = _name.lower()
     if model_name == "unet":
         return UNet.UNet()
     elif model_name == "unet++":
