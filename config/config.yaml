@@ -1,20 +1,27 @@
 #config.yaml
 
-EPOCHS: 20
-BATCH_SIZE: 32
-LEARNING_RATE: 1e-6
+## Choose between train_style0, train_style1, train_style2 or train_allstyles
+TRAIN_STYLE_PATHS:
+  -
+      train_style0:  "/dtu/datasets1/02514/isic/train_style0"
+
+  -
+    train_style1:  "/dtu/datasets1/02514/isic/train_style1"
+
+  -
+    train_style2:  "/dtu/datasets1/02514/isic/train_style2"
+
+  -
+    train_allstyles:  "/dtu/datasets1/02514/isic/train_allstyles"
+
+TEST_STYLE_PATH: "/dtu/datasets1/02514/isic/test_style0"
 
 N_WORKERS: 4
 
-BEST_MODEL_PATH: "checkpoints/best_model.pth"
-CHECKPOINT_PATH: "checkpoints/"
-DATASET_PATH: "/dtu/datasets1/02514/isic/"
-## Choose between train_style0, train_style1, train_style2 or train_allstyles
-TRAIN_STYLE: "train_style2"
-TEST_SET: "test_style0"
-IMG_SIZE: [224, 224]
+IMG_SIZE: [240, 160]
 ITER: 5
-## Choose between FCN, UNet, UNet++
-ARCHITECTURE: "grad_cam"
 
 PIN_MEMORY: True
+
+BEST_MODEL_PATH: "checkpoints/best_model.pth"
+CHECKPOINT_PATH: "checkpoints/"

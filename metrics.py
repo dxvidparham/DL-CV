@@ -13,6 +13,7 @@
 # for semantic segmentation
 ######################################################################
 
+import torch
 import numpy as np
 from torchmetrics.functional import accuracy, jaccard_index
 import torch
@@ -29,10 +30,13 @@ class SegmentationMetric(object):
         self.pixAcc = []
 
     def update(self, output, labels):
-        acc_score = accuracy(output, labels.int()).cpu()
+        output = torch.sigmoid(output)
+        labels = labels.int()
+
+        acc_score = accuracy(output, labels).cpu()
         self.pixAcc.append(acc_score)
 
-        iou_score = jaccard_index(output, labels.int(), num_classes=self.nclass).cpu()
+        iou_score = jaccard_index(output, labels, num_classes=self.nclass).cpu()
         self.IoU.append(iou_score)
 
     def get(self):
@@ -53,8 +57,8 @@ class SegmentationMetric(object):
         sum_out = output_.sum()
         sum_target = target_.sum()
 
-        return torch.tensor(sum_out), torch.tensor(sum_target) 
-    
+        return torch.tensor(sum_out), torch.tensor(sum_target)
+
 
 if __name__ == "__main__":
     pass

@@ -14,20 +14,26 @@
 
 import os
 import time
+from collections import ChainMap
 
-import albumentations as A
 import click
 import numpy as np
 import torch
 import wandb
-from albumentations.pytorch import ToTensorV2
 from omegaconf import OmegaConf
-from torch import nn, optim
 from tqdm import tqdm
 
 from dataLoader import ISICDataset
 from metrics import SegmentationMetric
-from utils import EarlyStopping, get_model, print_statistics, save_model
+from utils import (
+    EarlyStopping,
+    ImageTransformations,
+    models,
+    optimizers,
+    loss_fns,
+    print_statistics,
+    save_model,
+)
 
 # set flags / seeds to speed up the training process
 np.random.seed(1)
@@ -37,36 +43,33 @@ torch.autograd.set_detect_anomaly(False)
 torch.autograd.profiler.profile(False)
 torch.autograd.profiler.emit_nvtx(False)
 
-# Load config file
-BASE_DIR = os.path.dirname(os.path.realpath(__file__))
-config = OmegaConf.load(f"{BASE_DIR}/config/config.yaml")
 
-# Hyperparameter
-EPOCHS = config.EPOCHS
-BATCH_SIZE = config.BATCH_SIZE
-LEARNING_RATE = config.LEARNING_RATE
+def train(config, path_config, trainloader, testloader, disable_wandb, scaler) -> None:
 
-# Other const variables
-N_WORKERS = config.N_WORKERS
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-ARCHITECTURE = config.ARCHITECTURE
-IMG_SIZE = config.IMG_SIZE
-PIN_MEMORY = config.PIN_MEMORY
+    # Hyperparameter
+    EPOCHS = config.EPOCHS
+    LEARNING_RATE = config.LEARNING_RATE
 
-PRETRAINED = True
-
-
-def train(trainloader, testloader, disable_wandb, scaler) -> None:
+    # Other const variables
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    ARCHITECTURE = config.ARCHITECTURE
+    OPTIMIZER = config.OPTIMIZER
+    LOSS_FN = config.LOSS_FN
 
     # Control wandb initialization
     if disable_wandb:
         wandb.init(mode="disabled")
     else:
-        wandb.init(project="Segmentation", config=dict(config), entity="dlincvg1")
+        wandb.init(
+            project="Segmentation1",
+            config=dict(config),
+            entity="dlincvg1",
+            tags=["HP_Tuning"],
+        )
 
     print(f"[INFO] Initializing model architecture -> {ARCHITECTURE}...")
-    # Choose between FCN, UNet, UNet++, resnet101
-    model = get_model(ARCHITECTURE)  # changed function to return model not class
+    # Choose between UNet, UNet++, resnet101
+    model = models(ARCHITECTURE)()
 
     # Push model to GPU if available
     if torch.cuda.is_available():
@@ -79,14 +82,11 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
     wandb.watch(model, log_freq=100)
 
     # Choose cross_entropy for multi_class classification
-    loss_fn = nn.BCEWithLogitsLoss()
-
-    optimizer = optim.AdamW(
+    loss_fn = loss_fns(LOSS_FN)()
+    optimizer = optimizers(OPTIMIZER)(
         model.parameters(), lr=LEARNING_RATE, weight_decay=LEARNING_RATE / EPOCHS
     )
 
-    wandb.log({"optimizer": optimizer.__class__.__name__})
-    wandb.log({"loss_fn": loss_fn.__class__.__name__})
     wandb.log({"device": DEVICE})
 
     print("[INFO] Start training loop...\n")
@@ -121,7 +121,7 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
             scaler.update()
 
             losses.append(loss.item())
-            train_metrics.update(torch.sigmoid(output), labels)
+            train_metrics.update(output, labels)
 
         train_loss = sum(losses) / len(losses)
         train_mIoU, train_pixAcc = [
@@ -154,7 +154,7 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
                     loss = loss_fn(output, labels)
 
                 losses.append(loss.item())
-                test_metrics.update(torch.sigmoid(output), labels)
+                test_metrics.update(output, labels)
 
         test_loss = sum(losses) / len(losses)
         test_mIoU, test_pixAcc = [
@@ -174,12 +174,16 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
         if test_loss < best_test_loss:
             best_test_loss = test_loss
             save_model(
-                epoch, model, optimizer, config.BEST_MODEL_PATH, new_best_model=True
+                epoch,
+                model,
+                optimizer,
+                path_config.BEST_MODEL_PATH,
+                new_best_model=True,
             )
 
         # Save model based on the frequency defined by "args.save_after"
         if (epoch + 1) % 5 == 0:
-            save_model(epoch, model, optimizer, config.CHECKPOINT_PATH)
+            save_model(epoch, model, optimizer, path_config.CHECKPOINT_PATH)
 
         # early stopping
         early_stopping(train_loss, test_loss)
@@ -191,50 +195,76 @@ def train(trainloader, testloader, disable_wandb, scaler) -> None:
     run_time = end_t - start_t
 
     # if checkpoint folder is meant to be saved for each experiment
-    wandb.save(config.CHECKPOINT_PATH)
+    wandb.save(path_config.CHECKPOINT_PATH)
     print(
         f"[INFO] Successfully completed training session. Running time: {run_time/60:.2f} min"
     )
+
+
+def update_config(config, sweep_config):
+    for key, value in sweep_config.items():
+        config[key.upper()] = value
+    return config
 
 
 @click.command()
 @click.option(
     "--wandb", is_flag=True, default=False, help="Use this flag to enable wandb"
 )
-def main(wandb):
+@click.option(
+    "--ARCHITECTURE",
+    type=click.Choice(["unet", "unet++", "restnet101"], case_sensitive=False),
+    help="Choose between UNet, UNet++, resnet101",
+)
+@click.option("--BATCH_SIZE", type=int)
+@click.option("--EPOCHS", type=int, help="Use this flag to enable wandb")
+@click.option("--LEARNING_RATE", type=float, help="Use this flag to enable wandb")
+@click.option(
+    "--LOSS_FN",
+    type=click.Choice(["BCEWithLogitsLoss", "BinaryDiceLoss"], case_sensitive=False),
+    help="Use this flag to enable wandb",
+)
+@click.option(
+    "--OPTIMIZER",
+    type=click.Choice(["Adam", "SGD"], case_sensitive=False),
+    help="Use this flag to enable wandb",
+)
+def main(wandb, **args):
 
-    train_transform = A.Compose(
-        [
-            A.Resize(*IMG_SIZE),
-            # A.Rotate(limit=35, p=1.0),
-            # A.HorizontalFlip(p=0.5),
-            # A.VerticalFlip(p=0.1),
-            A.Normalize(
-                mean=[0.0, 0.0, 0.0],
-                std=[1.0, 1.0, 1.0],
-                max_pixel_value=255.0,
-            ),
-            ToTensorV2(),
-        ],
-    )
+    # Load config files
+    BASE_DIR = os.path.dirname(os.path.realpath(__file__))
+    config = OmegaConf.load(f"{BASE_DIR}/config/config.yaml")
+    hp_config = OmegaConf.load(f"{BASE_DIR}/config/hp_config.yaml")
 
-    test_transforms = A.Compose(
-        [
-            A.Resize(*IMG_SIZE),
-            A.Normalize(
-                mean=[0.0, 0.0, 0.0],
-                std=[1.0, 1.0, 1.0],
-                max_pixel_value=255.0,
-            ),
-            ToTensorV2(),
-        ],
-    )
+    # Updates the config values if hyperparamter optimization is on
+    if all(args.values()):
+        wandb = True
+        hp_config = update_config(hp_config, args)
 
-    config.pop("IMG_SIZE")
+    # Hyperparameter
+    BATCH_SIZE = hp_config.BATCH_SIZE
+
+    # Other const variables
+    N_WORKERS = config.N_WORKERS
+    IMG_SIZE = config.IMG_SIZE
+    PIN_MEMORY = config.PIN_MEMORY
+
+    # Load training paths into const variable
+    TRAIN_PATHS = ChainMap(*config.TRAIN_STYLE_PATHS[::-1])
+    TEST_PATH = config.TEST_STYLE_PATH
+
+    # Get transformations for respective training split
+    train_transform = ImageTransformations(is_train=True, img_size=IMG_SIZE)
+    test_transform = ImageTransformations(is_train=False, img_size=IMG_SIZE)
+
+    # Append names of transformations to config, to track data augmentation strategy
+    config["TRAIN_TRANSFORMATIONS"] = train_transform.__names__()
 
     print("[INFO] Load datasets from disk...")
-    training_set = ISICDataset(train_transform)
-    testing_set = ISICDataset(test_transforms)
+    training_set = ISICDataset(
+        TRAIN_PATHS.get("train_allstyles"), train_transform.augmentations
+    )
+    testing_set = ISICDataset(TEST_PATH, test_transform.augmentations)
 
     print("[INFO] Prepare dataloaders...")
     trainloader = torch.utils.data.DataLoader(
@@ -253,7 +283,14 @@ def main(wandb):
     )
 
     scaler = torch.cuda.amp.GradScaler()
-    train(trainloader, testloader, disable_wandb=not wandb, scaler=scaler)
+    train(
+        hp_config,
+        config,
+        trainloader,
+        testloader,
+        disable_wandb=not wandb,
+        scaler=scaler,
+    )
 
 
 if __name__ == "__main__":

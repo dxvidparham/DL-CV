@@ -20,8 +20,16 @@ import matplotlib.pyplot as plt
 import itertools
 import numpy as np
 import numpy.ma as ma
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+from torch import nn, optim
 
+<<<<<<< HEAD
 from architectures import FCN, NestedUNet, UNet, resnet101, grad_cam
+=======
+from architectures import NestedUNet, UNet, resnet101
+from loss import BinaryDiceLoss
+>>>>>>> segmentation
 
 
 class EarlyStopping:
@@ -39,7 +47,48 @@ class EarlyStopping:
                 self.early_stop = True
 
 
-def get_model(model_name):
+class ImageTransformations:
+    def __init__(self, is_train, img_size):
+        self.is_train = is_train
+        self.img_size = img_size
+        self.augmentations = None
+
+        if self.is_train:
+            self.augmentations = A.Compose(
+                [
+                    A.Resize(*self.img_size),
+                    # A.Rotate(limit=35, p=1.0),
+                    # A.HorizontalFlip(p=0.5),
+                    # A.VerticalFlip(p=0.1),
+                    A.Normalize(
+                        mean=[0.0, 0.0, 0.0],
+                        std=[1.0, 1.0, 1.0],
+                        max_pixel_value=255.0,
+                    ),
+                    ToTensorV2(),
+                ],
+            )
+        else:
+            self.augmentations = A.Compose(
+                [
+                    A.Resize(*self.img_size),
+                    A.Normalize(
+                        mean=[0.0, 0.0, 0.0],
+                        std=[1.0, 1.0, 1.0],
+                        max_pixel_value=255.0,
+                    ),
+                    ToTensorV2(),
+                ],
+            )
+
+    def __names__(self):
+        transformation_lst = []
+        for transformation in self.augmentations:
+            transformation_lst.append(str(transformation).split("(")[0])
+        return transformation_lst
+
+
+def models(_name):
     # changed to pass object not class
     model_name = model_name.lower()
     if model_name == "unet":
@@ -53,8 +102,26 @@ def get_model(model_name):
     elif model_name == "grad_cam":
         return grad_cam.VGG_seg()
     else:
-        print("Model with model name: {model_name} not found.")
-        raise ValueError
+        raise ValueError(f"[ERROR] Model: '{_name}' hasn't been enabled.")
+
+
+def optimizers(_name):
+    optimizers = {"adam": optim.Adam, "sgd": optim.SGD}
+    if _name.lower() in optimizers:
+        return optimizers.get(_name.lower())
+    else:
+        raise ValueError(f"[ERROR] Optimizer: '{_name}' hasn't been enabled.")
+
+
+def loss_fns(_name):
+    functions = {
+        "bcewithlogitsloss": nn.BCEWithLogitsLoss,
+        "binarydiceloss": BinaryDiceLoss,
+    }
+    if _name.lower() in functions:
+        return functions.get(_name.lower())
+    else:
+        raise ValueError(f"[ERROR] Loss: '{_name}' hasn't been enabled.")
 
 
 def save_model(epoch, model, optimizer, path, new_best_model=False):
@@ -102,7 +169,7 @@ def unique_file(basename, ext):
 #     # print(f"Image: {images.shape} {type(images)} {len(images)}, predicted: {predicted.shape} {type(predicted)}, GT: {label.shape} {type(label)}")
 #     plt.figure(figsize=(20,20))
 #     subplots = [plt.subplot(1,len(images), k+1) for k in range(len(images))]
-    
+
 #     for k, (img, pred, gt) in enumerate(zip(images, predicted, label)):
 #         # print(f"Image: {img.shape} {type(img)}, predicted: {pred.shape} {type(pred)}, GT: {gt.shape} {type(gt)}")
 #         print(f"image {k} added to plot")
@@ -123,29 +190,31 @@ def visualize_results(images, predicted, label):
     # print(f"Image: {images.shape} {type(images)} {len(images)}, predicted: {predicted.shape} {type(predicted)}, GT: {label.shape} {type(label)}")
     for k, (img, pred, gt) in enumerate(zip(images, predicted, label)):
         # print(f"Image: {img} {type(img)}, predicted: {pred} {type(pred)}, GT: {gt} {type(gt)}")
-        plt.figure(figsize=(10,10))
-        subplots = [plt.subplot(1,3, k+1) for k in range(3)]
+        plt.figure(figsize=(10, 10))
+        subplots = [plt.subplot(1, 3, k + 1) for k in range(3)]
         print(f"image {k} added to plot")
         img = (img.permute(1, 2, 0) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
         pred = pred.permute(1, 2, 0).to(torch.uint8).cpu().numpy()
         pred_mask = np.zeros_like(pred)
-        mask = pred>0.5
+        mask = pred > 0.5
         pred_mask[mask] = 1
         # print(f"pred_mask: {pred_mask.shape}")
         gt = gt.permute(1, 2, 0).to(torch.uint8).cpu().numpy()
         # print(f"gt: {gt}")
         # gt_mask = np.zeros_like(pred)[gt>0.5]=1
         subplots[0].imshow(img.cpu().numpy())
-        subplots[0].axis('off')
-        subplots[0].set_title('Test image')
+        subplots[0].axis("off")
+        subplots[0].set_title("Test image")
         subplots[1].imshow(gt, "gnuplot")
-        subplots[1].axis('off')
-        subplots[1].set_title('Ground truth')
+        subplots[1].axis("off")
+        subplots[1].set_title("Ground truth")
         # plt.savefig(unique_file("out/images/test_result_gt","png"),bbox_inches = "tight")
         subplots[2].imshow(pred_mask, "turbo")
-        subplots[2].axis('off')
-        subplots[2].set_title('Predicted')
-        plt.savefig(unique_file("out/images/test_result_all","png"),bbox_inches = "tight")
+        subplots[2].axis("off")
+        subplots[2].set_title("Predicted")
+        plt.savefig(
+            unique_file("out/images/test_result_all", "png"), bbox_inches="tight"
+        )
     print("saved_file")
 
 

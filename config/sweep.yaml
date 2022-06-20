@@ -1,0 +1,33 @@
+method: bayes
+metric:
+  goal: minimize
+  name: test_loss
+parameters:
+  ARCHITECTURE:
+    distribution: categorical
+    values:
+      - unet
+      - unet++
+  BATCH_SIZE:
+    distribution: int_uniform
+    max: 64
+    min: 2
+  EPOCHS:
+    distribution: constant
+    value: 25
+  LEARNING_RATE:
+    distribution: uniform
+    max: 0.002
+    min: 5e-05
+  LOSS_FN:
+    distribution: categorical
+    values:
+      - BCEWithLogitsLoss
+      - BinaryDiceLoss
+  OPTIMIZER:
+    distribution: categorical
+    values:
+      - Adam
+      - SGD
+
+program: train.py

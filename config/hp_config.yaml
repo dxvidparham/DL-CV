@@ -1,0 +1,13 @@
+#config.yaml
+
+EPOCHS: 20
+BATCH_SIZE: 32
+LEARNING_RATE: 1e-6
+
+## Choose between UNet, UNet++, resnet101, grad_cam
+ARCHITECTURE: "grad_cam"
+
+LOSS_FN: "BCEWithLogitsLoss"
+OPTIMIZER: "Adam"
+#TODO: check optim and loss for grad_cam train.
+
