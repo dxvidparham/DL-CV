@@ -18,12 +18,12 @@ import torch
 import matplotlib.pyplot as plt
 import itertools
 import numpy as np
-import numpy.ma as ma
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from torch import nn, optim
 
-from architectures import NestedUNet, UNet, resnet101
+from architectures import NestedUNet, UNet
+from architectures.resnet101 import SegmentationModelOutputWrapper as resnet101
 from loss import BinaryDiceLoss
 
 
@@ -52,9 +52,30 @@ class ImageTransformations:
             self.augmentations = A.Compose(
                 [
                     A.Resize(*self.img_size),
-                    # A.Rotate(limit=35, p=1.0),
-                    # A.HorizontalFlip(p=0.5),
-                    # A.VerticalFlip(p=0.1),
+                    A.HorizontalFlip(p=0.5),
+                    A.VerticalFlip(p=0.5),
+                    A.Transpose(p=0.5),
+                    A.ShiftScaleRotate(
+                        shift_limit=0.01, scale_limit=0.04, rotate_limit=0, p=0.25
+                    ),
+                    # # Pixels
+                    A.RandomBrightnessContrast(p=0.5),
+                    A.RandomGamma(p=0.25),
+                    A.Blur(p=0.01, blur_limit=3),
+                    # Affine
+                    A.OneOf(
+                        [
+                            A.ElasticTransform(
+                                p=0.5,
+                                alpha=120,
+                                sigma=120 * 0.05,
+                                alpha_affine=120 * 0.03,
+                            ),
+                            A.GridDistortion(p=0.5),
+                            A.OpticalDistortion(p=1, distort_limit=2, shift_limit=0.5),
+                        ],
+                        p=0.8,
+                    ),
                     A.Normalize(
                         mean=[0.0, 0.0, 0.0],
                         std=[1.0, 1.0, 1.0],
@@ -88,7 +109,7 @@ def models(_name):
     model_dct = {
         "unet": UNet.UNet,
         "unet++": NestedUNet.NestedUNet,
-        # "resnet101": resnet101.load_resnet,
+        "resnet101": resnet101,
     }
     if _name.lower() in model_dct:
         return model_dct.get(_name.lower())
@@ -97,7 +118,12 @@ def models(_name):
 
 
 def optimizers(_name):
-    optimizers = {"adam": optim.Adam, "sgd": optim.SGD}
+    optimizers = {
+        "adam": optim.Adam,
+        "sgd": optim.SGD,
+        "adamw": optim.AdamW,
+        "rmsprop": optim.RMSprop,
+    }
     if _name.lower() in optimizers:
         return optimizers.get(_name.lower())
     else:

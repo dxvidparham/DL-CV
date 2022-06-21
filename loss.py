@@ -14,7 +14,6 @@
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class BinaryDiceLoss(nn.Module):
@@ -61,52 +60,11 @@ class BinaryDiceLoss(nn.Module):
             raise Exception("Unexpected reduction {}".format(self.reduction))
 
 
-class DiceLoss(nn.Module):
-    """Dice loss, need one hot encode input
-    Args:
-        weight: An array of shape [num_classes,]
-        ignore_index: class index to ignore
-        predict: A tensor of shape [N, C, *]
-        target: A tensor of same shape with predict
-        other args pass to BinaryDiceLoss
-    Return:
-        same as BinaryDiceLoss
-    """
-
-    def __init__(self, weight=None, ignore_index=None, **kwargs):
-        super(DiceLoss, self).__init__()
-        self.kwargs = kwargs
-        self.weight = weight
-        self.ignore_index = ignore_index
-
-    def forward(self, predict, target):
-        assert predict.shape == target.shape, "predict & target shape do not match"
-        dice = BinaryDiceLoss(**self.kwargs)
-        total_loss = 0
-        predict = F.softmax(predict, dim=1)
-
-        for i in range(target.shape[1]):
-            if i != self.ignore_index:
-                dice_loss = dice(predict[:, i], target[:, i])
-                if self.weight is not None:
-                    assert (
-                        self.weight.shape[0] == target.shape[1]
-                    ), f"Expect weight shape [{target.shape[1]}], get[{self.weight.shape[0]}]"
-
-                    dice_loss *= self.weights[i]
-                total_loss += dice_loss
-
-        return total_loss / target.shape[1]
-
-
 if __name__ == "__main__":
     torch.manual_seed(1)
 
     output = torch.rand(32, 3, 240, 160)
     labels = torch.rand(32, 3, 240, 160)
 
-    loss_fn1 = DiceLoss()
-    loss_fn2 = BinaryDiceLoss()
-
-    print(loss_fn1(output, labels))
-    print(loss_fn2(output, labels))
+    loss_fn = BinaryDiceLoss()
+    print(loss_fn(output, labels))

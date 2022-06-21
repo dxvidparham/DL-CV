@@ -1,11 +1,11 @@
 #config.yaml
 
-EPOCHS: 20
-BATCH_SIZE: 32
-LEARNING_RATE: 1e-4
+EPOCHS: 100
+BATCH_SIZE: 16
+LEARNING_RATE: 5e-5
 
 ## Choose between UNet, UNet++, resnet101
 ARCHITECTURE: "unet"
 
 LOSS_FN: "BCEWithLogitsLoss"
-OPTIMIZER: "Adam"
+OPTIMIZER: "adamw"

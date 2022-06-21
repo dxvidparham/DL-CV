@@ -19,18 +19,18 @@ from collections import ChainMap
 import click
 import numpy as np
 import torch
-import wandb
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
+import wandb
 from dataLoader import ISICDataset
 from metrics import SegmentationMetric
 from utils import (
     EarlyStopping,
     ImageTransformations,
+    loss_fns,
     models,
     optimizers,
-    loss_fns,
     print_statistics,
     save_model,
 )
@@ -64,7 +64,7 @@ def train(config, path_config, trainloader, testloader, disable_wandb, scaler) -
             project="Segmentation1",
             config=dict(config),
             entity="dlincvg1",
-            tags=["HP_Tuning"],
+            # tags=[""],
         )
 
     print(f"[INFO] Initializing model architecture -> {ARCHITECTURE}...")
@@ -258,7 +258,7 @@ def main(wandb, **args):
     test_transform = ImageTransformations(is_train=False, img_size=IMG_SIZE)
 
     # Append names of transformations to config, to track data augmentation strategy
-    config["TRAIN_TRANSFORMATIONS"] = train_transform.__names__()
+    hp_config["TRAIN_TRANSFORMATIONS"] = train_transform.__names__()
 
     print("[INFO] Load datasets from disk...")
     training_set = ISICDataset(

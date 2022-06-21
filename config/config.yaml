@@ -18,7 +18,7 @@ TEST_STYLE_PATH: "/dtu/datasets1/02514/isic/test_style0"
 
 N_WORKERS: 4
 
-IMG_SIZE: [240, 160]
+IMG_SIZE: [128, 128]
 ITER: 5
 
 PIN_MEMORY: True
